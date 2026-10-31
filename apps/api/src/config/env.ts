@@ -3,9 +3,24 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-function loadEnvFileSafe(): void {
+export function findRepoRoot(startDir: string = process.cwd()): string {
+  let curr = resolve(startDir);
+  while (true) {
+    if (existsSync(resolve(curr, 'pnpm-workspace.yaml')) || existsSync(resolve(curr, '.git'))) {
+      return curr;
+    }
+    const parent = dirname(curr);
+    if (parent === curr) break;
+    curr = parent;
+  }
+  return startDir;
+}
+
+export function loadEnvFileSafe(options?: { override?: boolean }): void {
   const here = dirname(fileURLToPath(import.meta.url));
+  const root = findRepoRoot();
   const candidatePaths = [
+    resolve(root, '.env'),
     resolve(process.cwd(), '.env'),
     resolve(process.cwd(), '..', '.env'),
     resolve(process.cwd(), '..', '..', '.env'),
@@ -25,7 +40,7 @@ function loadEnvFileSafe(): void {
           if (idx !== -1) {
             const k = trimmed.slice(0, idx).trim();
             const v = trimmed.slice(idx + 1).trim();
-            if (!process.env[k]) {
+            if (options?.override || !process.env[k]) {
               process.env[k] = v;
             }
           }
@@ -49,7 +64,8 @@ const LIVE_PAYPAL_HOSTS = ['api-m.paypal.com', 'api.paypal.com'];
 export const EnvSchema = z
   .object({
     NODE_ENV: z.string().default('development'),
-    DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/settle'),
+    DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5433/settle'),
+    TEST_DATABASE_URL: z.string().optional(),
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default('0.0.0.0'),
     ENGINE_IMPL: z.enum(['stub', 'real']).default('stub'),
@@ -104,4 +120,19 @@ export function getEnv(overrides: Record<string, string | undefined> = {}): ApiE
 
 export function resetCachedEnv(): void {
   cachedEnv = null;
+}
+
+export function getTestDatabaseUrl(): string {
+  loadEnvFileSafe();
+  if (process.env.TEST_DATABASE_URL) {
+    return process.env.TEST_DATABASE_URL;
+  }
+  const baseDb = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5433/settle';
+  try {
+    const url = new URL(baseDb);
+    url.pathname = '/settle_test';
+    return url.toString();
+  } catch {
+    return 'postgresql://postgres:postgres@localhost:5433/settle_test';
+  }
 }
