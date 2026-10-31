@@ -1,0 +1,281 @@
+{
+  "business": {
+    "id": "biz_001",
+    "name": "Maya Studio",
+    "currency": "USD",
+    "asOf": "2026-11-05",
+    "startingBalance": 980000,
+    "reserveThreshold": 500000
+  },
+  "payers": [
+    {
+      "id": "pay_001",
+      "name": "Acme Corp",
+      "email": "acme-sb@sandbox.settle.dev",
+      "persona": "reliable",
+      "avgDaysLate": 1,
+      "latenessRisk": 0.05
+    },
+    {
+      "id": "pay_002",
+      "name": "Bright LLC",
+      "email": "bright-sb@sandbox.settle.dev",
+      "persona": "reliable",
+      "avgDaysLate": 0,
+      "latenessRisk": 0.03
+    },
+    {
+      "id": "pay_003",
+      "name": "Crimson Inc",
+      "email": "crimson-sb@sandbox.settle.dev",
+      "persona": "slow",
+      "avgDaysLate": 12,
+      "latenessRisk": 0.55
+    },
+    {
+      "id": "pay_004",
+      "name": "Delta Services",
+      "email": "delta-sb@sandbox.settle.dev",
+      "persona": "chronic",
+      "avgDaysLate": 25,
+      "latenessRisk": 0.8
+    },
+    {
+      "id": "pay_005",
+      "name": "Echo Dynamics",
+      "email": "echo-sb@sandbox.settle.dev",
+      "persona": "chronic",
+      "avgDaysLate": 30,
+      "latenessRisk": 0.85
+    },
+    {
+      "id": "pay_006",
+      "name": "Phantom Ltd",
+      "email": "phantom-sb@sandbox.settle.dev",
+      "persona": "ghost",
+      "avgDaysLate": 90,
+      "latenessRisk": 0.95
+    }
+  ],
+  "invoices": [
+    {
+      "id": "inv_001",
+      "payerId": "pay_003",
+      "number": "INV-1001",
+      "description": "Web design – Phase 2",
+      "amount": 350000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-21",
+      "dueDate": "2026-10-31",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_002",
+      "payerId": "pay_004",
+      "number": "INV-1002",
+      "description": "Brand strategy retainer",
+      "amount": 320000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-11",
+      "dueDate": "2026-10-26",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_003",
+      "payerId": "pay_005",
+      "number": "INV-1003",
+      "description": "UX audit Q3",
+      "amount": 280000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-06",
+      "dueDate": "2026-10-28",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_004",
+      "payerId": "pay_004",
+      "number": "INV-1004",
+      "description": "Logo refresh",
+      "amount": 150000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-16",
+      "dueDate": "2026-11-02",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_005",
+      "payerId": "pay_005",
+      "number": "INV-1005",
+      "description": "Illustration pack",
+      "amount": 120000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-18",
+      "dueDate": "2026-11-01",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_006",
+      "payerId": "pay_006",
+      "number": "INV-1006",
+      "description": "Stationery design",
+      "amount": 80000,
+      "amountPaid": 0,
+      "issueDate": "2026-09-26",
+      "dueDate": "2026-10-24",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_007",
+      "payerId": "pay_003",
+      "number": "INV-1007",
+      "description": "Social media templates",
+      "amount": 60000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-26",
+      "dueDate": "2026-11-03",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_008",
+      "payerId": "pay_006",
+      "number": "INV-1008",
+      "description": "Packaging mockup",
+      "amount": 50000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-01",
+      "dueDate": "2026-10-29",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_009",
+      "payerId": "pay_001",
+      "number": "INV-1009",
+      "description": "Annual report design",
+      "amount": 180000,
+      "amountPaid": 180000,
+      "issueDate": "2026-10-06",
+      "dueDate": "2026-10-31",
+      "status": "PAID",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_010",
+      "payerId": "pay_001",
+      "number": "INV-1010",
+      "description": "Brand guidelines portal",
+      "amount": 150000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-31",
+      "dueDate": "2026-11-11",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_011",
+      "payerId": "pay_002",
+      "number": "INV-1011",
+      "description": "Product catalog",
+      "amount": 120000,
+      "amountPaid": 120000,
+      "issueDate": "2026-10-16",
+      "dueDate": "2026-11-03",
+      "status": "PAID",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_012",
+      "payerId": "pay_002",
+      "number": "INV-1012",
+      "description": "Design system rollout",
+      "amount": 230000,
+      "amountPaid": 0,
+      "issueDate": "2026-10-30",
+      "dueDate": "2026-11-14",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_013",
+      "payerId": "pay_001",
+      "number": "INV-1013",
+      "description": "Poster series",
+      "amount": 60000,
+      "amountPaid": 0,
+      "issueDate": "2026-11-02",
+      "dueDate": "2026-11-17",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    },
+    {
+      "id": "inv_014",
+      "payerId": "pay_003",
+      "number": "INV-1014",
+      "description": "App icon set",
+      "amount": 45000,
+      "amountPaid": 0,
+      "issueDate": "2026-11-04",
+      "dueDate": "2026-11-19",
+      "status": "SENT",
+      "discountPct": 0,
+      "allowPartial": false
+    }
+  ],
+  "obligations": [
+    {
+      "id": "obl_001",
+      "label": "Payroll Nov",
+      "kind": "payroll",
+      "amount": 680000,
+      "dueDate": "2026-11-09"
+    },
+    {
+      "id": "obl_002",
+      "label": "Supplier – Ink Co",
+      "kind": "supplier",
+      "amount": 140000,
+      "dueDate": "2026-11-12"
+    },
+    {
+      "id": "obl_003",
+      "label": "Office Rent Dec",
+      "kind": "rent",
+      "amount": 220000,
+      "dueDate": "2026-11-15"
+    }
+  ],
+  "policy": {
+    "maxDiscountPct": 10,
+    "maxInstalments": 4,
+    "autoApproveMaxAmount": 200000,
+    "requireApprovalFor": [
+      "OFFER_DISCOUNT",
+      "ESCALATE"
+    ],
+    "quietHours": {
+      "startHour": 22,
+      "endHour": 7
+    },
+    "maxRemindersPerInvoicePerWeek": 3
+  }
+}
