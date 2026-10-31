@@ -25,6 +25,11 @@ export interface PayPalClientOptions {
   baseUrl?: string;
   fetchFn?: typeof fetch;
   authenticator?: PayPalAuthenticator;
+  historyRepo?: {
+    record(invoiceId: string, paypalInvoiceId: string, reason?: string): Promise<void>;
+    markReplaced(oldPayPalId: string, reason?: string): Promise<void>;
+    findByPayPalId(paypalInvoiceId: string): Promise<{ invoiceId: string; replacedAt: string | null } | null>;
+  };
 }
 
 export class PayPalClient implements PayPalPort {
@@ -34,10 +39,12 @@ export class PayPalClient implements PayPalPort {
   private readonly auditTrail: AuditRecord[] = [];
   /** Maps original paypalInvoiceId -> new paypalInvoiceId when cancel-and-reissue fallback is triggered */
   private readonly reissuedMap: Map<string, string> = new Map();
+  private readonly historyRepo?: PayPalClientOptions['historyRepo'];
 
   constructor(options: PayPalClientOptions) {
     this.baseUrl = (options.baseUrl ?? 'https://api-m.sandbox.paypal.com').replace(/\/+$/, '');
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
+    this.historyRepo = options.historyRepo;
     this.authenticator =
       options.authenticator ??
       new PayPalAuthenticator({
@@ -251,6 +258,14 @@ export class PayPalClient implements PayPalPort {
       sendData?.href ||
       draftData?.detail?.metadata?.recipient_view_url ||
       this.generatePayLink(paypalInvoiceId);
+
+    if (this.historyRepo && inv.id) {
+      try {
+        await this.historyRepo.record(inv.id, paypalInvoiceId, 'initial_creation');
+      } catch {
+        // history recording best-effort
+      }
+    }
 
     return { paypalInvoiceId, payUrl };
   }
@@ -481,6 +496,17 @@ export class PayPalClient implements PayPalPort {
 
     // Map old invoice ID to new invoice ID
     this.reissuedMap.set(oldInvoiceId, newInvoiceId);
+
+    if (this.historyRepo) {
+      try {
+        await this.historyRepo.markReplaced(oldInvoiceId, 'cancelled_and_reissued');
+        const invoiceId = currentInv.id || oldInvoiceId;
+        await this.historyRepo.record(invoiceId, newInvoiceId, 'reissued_after_cancellation');
+      } catch {
+        // history recording best-effort
+      }
+    }
+
     return newInvoiceId;
   }
 

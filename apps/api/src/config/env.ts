@@ -49,6 +49,16 @@ const LIVE_PAYPAL_HOSTS = ['api-m.paypal.com', 'api.paypal.com'];
 export const EnvSchema = z
   .object({
     NODE_ENV: z.string().default('development'),
+    DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/settle'),
+    PORT: z.coerce.number().default(3000),
+    HOST: z.string().default('0.0.0.0'),
+    ENGINE_IMPL: z.enum(['stub', 'real']).default('stub'),
+    AGENT_IMPL: z.enum(['stub', 'real']).default('stub'),
+    WEB_ORIGIN: z.string().default('http://localhost:5173'),
+    WEBHOOK_VERIFY: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => (typeof val === 'boolean' ? val : val !== 'false'))
+      .default(true),
     PAYPAL_CLIENT_ID: z.string().min(1, 'PAYPAL_CLIENT_ID is required'),
     PAYPAL_CLIENT_SECRET: z.string().min(1, 'PAYPAL_CLIENT_SECRET is required'),
     PAYPAL_BASE_URL: z.string().url().default('https://api-m.sandbox.paypal.com'),
