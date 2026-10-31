@@ -9,7 +9,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "seed": "pnpm --filter @settle/api seed"
+    "seed": "pnpm --filter @settle/api seed",
+    "spike": "pnpm --filter @settle/api spike"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
