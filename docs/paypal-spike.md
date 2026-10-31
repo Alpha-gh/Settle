@@ -59,3 +59,4 @@ PayPal Invoicing v2 statuses map cleanly to Settle's `InvoiceStatus`:
 ### 5. Webhook Timing & Notifications
 - Webhook notifications are delivered asynchronously by PayPal's background event workers (typically 15–90 seconds after transaction).
 - For local development and automated spikes, querying `/v1/notifications/webhooks-events` or polling `/v2/invoicing/invoices/{id}` provides deterministic state verification.
+

@@ -30,3 +30,4 @@ export class PayPalError extends Error {
     this.rawError = params.rawError;
   }
 }
+

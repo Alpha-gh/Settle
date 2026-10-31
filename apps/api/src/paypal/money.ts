@@ -42,3 +42,4 @@ export function payPalStringToCents(value: string): Cents {
 
   return isNegative ? -totalCents : totalCents;
 }
+
