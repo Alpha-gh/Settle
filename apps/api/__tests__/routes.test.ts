@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { resetCachedEnv } from '../src/config/env.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { resetDemoData } from '../src/db/seed.js';
+import { setupTestDatabase } from '../src/db/test-db.js';
+
 import { closeDb, getDb } from '../src/db/index.js';
 import { eventBus } from '../src/events/bus.js';
 import { DashboardResponseSchema } from '../src/schemas/index.js';
@@ -15,10 +15,10 @@ describe('API Routes & Contract v1 Integration Tests', () => {
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
-    process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/settle';
+    await setupTestDatabase();
     process.env.WEBHOOK_VERIFY = 'false'; // test mode for webhook verification
-    await runMigrations();
-    await resetDemoData();
+
+
     app = await buildApp();
     await app.ready();
   });
