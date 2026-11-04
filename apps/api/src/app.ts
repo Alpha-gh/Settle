@@ -2,7 +2,15 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import type { Snapshot, Payer, AuditEvent } from '@settle/shared';
+import {
+  type Snapshot,
+  type Payer,
+  type AuditEvent,
+  type Policy,
+  type ActionRecord,
+  type PayPalPort,
+  evaluatePolicy,
+} from '@settle/shared';
 import { getEnv } from './config/env.js';
 import {
   BusinessRepository,
@@ -21,16 +29,19 @@ import { getAgent } from './adapters/agent.js';
 import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
 import { PayPalWebhookHandler } from './paypal/webhook.js';
+import { ActionService, NotProvisionedError } from './services/actions.js';
 import {
   SimulateRequestBodySchema,
   ChatRequestBodySchema,
   PolicySchema,
   DashboardResponseSchema,
   ActionDecisionBodySchema,
+  AgentRunRequestBodySchema,
+  SimulatePaymentBodySchema,
 } from './schemas/index.js';
 
 export interface BuildAppOptions {
-  paypalClient?: PayPalClient;
+  paypalClient?: PayPalClient | PayPalPort;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -68,6 +79,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       code = 'VALIDATION_ERROR';
       message = 'Request validation failed';
       details = error.errors;
+    } else if (error instanceof NotProvisionedError || error?.statusCode === 409 || error?.code === 'NOT_PROVISIONED') {
+      statusCode = 409;
+      code = 'NOT_PROVISIONED';
+      message = error.message || 'Invoice is not provisioned in PayPal';
     } else if (error?.statusCode) {
       statusCode = error.statusCode;
       code = error.code || 'HTTP_ERROR';
@@ -112,19 +127,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       historyRepo,
     });
 
-  const webhookHandler = new PayPalWebhookHandler(paypalClient, app.log);
+  const actionService = new ActionService(
+    actionRepo,
+    invoiceRepo,
+    payerRepo,
+    policyRepo,
+    auditRepo,
+    historyRepo,
+    paypalClient,
+  );
+
+  const webhookHandler = new PayPalWebhookHandler(paypalClient as any, app.log);
 
   // Helper to construct current snapshot from DB
   async function getCurrentSnapshot(): Promise<Snapshot> {
     let business = await businessRepo.get();
     if (!business) {
-  
-
-
-
-
-
-
       await resetDemoData();
       business = (await businessRepo.get())!;
     }
@@ -161,14 +179,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
     const kpis = engine.kpis(snapshot);
 
-
-
-
-
-
-
-
-
     const recentActions = await actionRepo.list();
     const auditLog = await auditRepo.list(50);
 
@@ -195,19 +205,110 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 3. Agent Run Cycle
   app.post('/api/agent/run', async (request, reply) => {
+    const body = AgentRunRequestBodySchema?.parse(request.body || {});
+    const targetInvoiceId = body?.invoiceId;
+
+    if (targetInvoiceId) {
+      const inv = await invoiceRepo.getById(targetInvoiceId);
+      if (!inv) {
+        return reply.status(404).send({
+          error: { code: 'NOT_FOUND', message: `Invoice ${targetInvoiceId} not found` },
+        });
+      }
+      if (!inv.paypalInvoiceId) {
+        return reply.status(409).send({
+          error: { code: 'NOT_PROVISIONED', message: 'Invoice is not provisioned in PayPal' },
+        });
+      }
+    }
+
     const snapshot = await getCurrentSnapshot();
     const agent = await getAgent();
     const result = await agent.runCycle(snapshot);
 
-    // Save proposed actions
+    if (targetInvoiceId) {
+      result.actions = result.actions.filter((a) => a.invoiceId === targetInvoiceId);
+      result.skipped = result.skipped.filter((s) => s.invoiceId === targetInvoiceId);
+    }
+
+    const now = new Date();
+    const effectivePolicy: Policy = env.POLICY_IGNORE_QUIET_HOURS
+      ? { ...snapshot.policy, quietHours: { startHour: 0, endHour: 0 } }
+      : snapshot.policy;
+
+    const processedActions: ActionRecord[] = [];
+
     for (const action of result.actions) {
+      const invoice = snapshot.invoices.find((i) => i.id === action.invoiceId);
+      if (!invoice) {
+        continue;
+      }
+
+      // Re-evaluate policy server-side
+      const remindersLastWeek = await actionService.countRemindersLastWeek(invoice.id, now);
+      const serverVerdict = evaluatePolicy(
+        { type: action.type, params: action.params },
+        invoice,
+        effectivePolicy,
+        { now, remindersLastWeek },
+      );
+
+      // Audit discrepancy if server verdict differs from agent's verdict
+      if (
+        serverVerdict.allowed !== action.policy.allowed ||
+        serverVerdict.requiresApproval !== action.policy.requiresApproval
+      ) {
+        const discAudit: AuditEvent = {
+          id: randomUUID(),
+          ts: now.toISOString(),
+          actor: 'system',
+          kind: 'policy.discrepancy',
+          summary: `Policy discrepancy detected for action ${action.id}: server verdict differed from agent proposed verdict`,
+          invoiceId: invoice.id,
+          actionId: action.id,
+          detail: { agentPolicy: action.policy, serverVerdict },
+        };
+        await auditRepo.append(discAudit);
+        eventBus.emitEvent({ type: 'audit.appended', payload: discAudit });
+      }
+
+      action.policy = serverVerdict;
+
+      if (!serverVerdict.allowed) {
+        action.status = 'BLOCKED';
+      } else if (serverVerdict.requiresApproval) {
+        action.status = 'AWAITING_APPROVAL';
+      } else {
+        action.status = 'APPROVED';
+        action.decidedBy = 'auto';
+      }
+
       const existing = await actionRepo.getById(action.id);
-      if (!existing) {
+      if (existing) {
+        await actionRepo.update(action);
+      } else {
         await actionRepo.insert(action);
-        eventBus.emitEvent({ type: 'action.updated', payload: action });
+      }
+      eventBus.emitEvent({ type: 'action.updated', payload: action });
+
+      // Auto-execute allowed-without-approval actions
+      if (action.status === 'APPROVED' && action.decidedBy === 'auto') {
+        const requiresPayPal = ['REMIND', 'OFFER_DISCOUNT', 'OFFER_INSTALMENTS'].includes(action.type);
+        if (requiresPayPal && !invoice.paypalInvoiceId) {
+          action.status = 'AWAITING_APPROVAL';
+          action.decidedBy = undefined;
+          await actionRepo.update(action);
+          processedActions.push(action);
+        } else {
+          const executed = await actionService.executeAction(action.id, 'auto');
+          processedActions.push(executed);
+        }
+      } else {
+        processedActions.push(action);
       }
     }
 
+    result.actions = processedActions;
     return result;
   });
 
@@ -219,7 +320,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // 5. Action Approve
   app.post<{ Params: { id: string } }>('/api/actions/:id/approve', async (request, reply) => {
     const { id } = request.params;
-    const body = ActionDecisionBodySchema.parse(request.body || {});
+    ActionDecisionBodySchema.parse(request.body || {});
 
     const record = await actionRepo.getById(id);
     if (!record) {
@@ -228,28 +329,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       });
     }
 
-    const updated = await actionRepo.update(id, {
-      status: 'APPROVED',
-      decidedBy: 'owner',
-      executedAt: new Date().toISOString(),
-    });
-
-    const auditEvt = {
-      id: `aud_appr_${Date.now()}`,
-      ts: new Date().toISOString(),
-      actor: 'owner' as const,
-      kind: 'action.approved',
-      summary: `Action ${record.type} for invoice ${record.invoiceId} approved by owner.`,
-      actionId: id,
-      invoiceId: record.invoiceId,
-      detail: body,
-    };
-    await auditRepo.append(auditEvt);
-
-    eventBus.emitEvent({ type: 'action.updated', payload: updated });
-    eventBus.emitEvent({ type: 'audit.appended', payload: auditEvt });
-
-    return updated;
+    const executed = await actionService.executeAction(id, 'owner');
+    return executed;
   });
 
   // 6. Action Reject
@@ -264,27 +345,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       });
     }
 
-    const updated = await actionRepo.update(id, {
-      status: 'REJECTED',
-      decidedBy: 'owner',
-    });
-
-    const auditEvt = {
-      id: `aud_rej_${Date.now()}`,
-      ts: new Date().toISOString(),
-      actor: 'owner' as const,
-      kind: 'action.rejected',
-      summary: `Action ${record.type} for invoice ${record.invoiceId} rejected by owner.`,
-      actionId: id,
-      invoiceId: record.invoiceId,
-      detail: body,
-    };
-    await auditRepo.append(auditEvt);
-
-    eventBus.emitEvent({ type: 'action.updated', payload: updated });
-    eventBus.emitEvent({ type: 'audit.appended', payload: auditEvt });
-
-    return updated;
+    const rejected = await actionService.rejectAction(id, body.note);
+    return rejected;
   });
 
   // 7. Simulate Scenario
@@ -303,7 +365,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       },
       body.change,
     );
-
 
     return comparison;
   });
@@ -393,7 +454,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     failed: number;
     failures: Array<{ invoiceId: string; error: string }>;
   }> {
-
     const allInvoices = await invoiceRepo.list();
     const allPayers = await payerRepo.list();
     const payerMap = new Map(allPayers.map((p) => [p.id, p]));
@@ -472,28 +532,99 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { provisioned, skipped, failed, failures };
   }
 
-  // 14. Demo Provision PayPal
+  // 13. Demo Provision PayPal
   app.post('/api/demo/provision-paypal', async () => {
     return provisionPayPal();
   });
 
-  // 13. Demo Reset
-  // Reset demo data handler
-  // auto-provisioning reset support
-  app.post('/api/demo/reset', async (request, reply) => {
+  // 14. Demo Simulate Payment
+  app.post('/api/demo/simulate-payment', async (request, reply) => {
+    const body = SimulatePaymentBodySchema.parse(request.body);
+    const invoice = await invoiceRepo.getById(body.invoiceId);
+    if (!invoice) {
+      return reply.status(404).send({
+        error: { code: 'NOT_FOUND', message: `Invoice ${body.invoiceId} not found` },
+      });
+    }
 
+    if (!invoice.paypalInvoiceId) {
+      return reply.status(409).send({
+        error: { code: 'NOT_PROVISIONED', message: 'Invoice is not provisioned in PayPal' },
+      });
+    }
+
+    const remaining = invoice.amount - invoice.amountPaid;
+    const paymentAmount = body.amount ?? remaining;
+    if (paymentAmount <= 0) {
+      return reply.status(400).send({
+        error: { code: 'INVALID_AMOUNT', message: 'Payment amount must be greater than 0' },
+      });
+    }
+
+    let paymentResult: any = { paymentId: `ext_pay_${randomUUID().slice(0, 8)}`, paypalRequestId: randomUUID() };
+    if (typeof (paypalClient as any).recordExternalPayment === 'function') {
+      paymentResult = await (paypalClient as any).recordExternalPayment(
+        invoice.paypalInvoiceId,
+        paymentAmount,
+        'Simulated payment via Settle demo',
+      );
+    }
+
+    // Immediately reconcile with getInvoice; never wait for webhooks
+    const reconciled = await paypalClient.getInvoice(invoice.paypalInvoiceId);
+
+    const updated = await invoiceRepo.update(invoice.id, {
+      status: reconciled.status,
+      amountPaid: reconciled.amountPaid,
+    });
+
+    const payAudit: AuditEvent = {
+      id: randomUUID(),
+      ts: new Date().toISOString(),
+      actor: 'paypal',
+      kind: 'invoice.paid',
+      summary: `Payment of $${(paymentAmount / 100).toFixed(2)} recorded for invoice ${invoice.number} (status: ${reconciled.status})`,
+      invoiceId: invoice.id,
+      paypalRequestId: paymentResult?.paypalRequestId,
+      detail: {
+        paymentAmount,
+        reconciledStatus: reconciled.status,
+        reconciledAmountPaid: reconciled.amountPaid,
+      },
+    };
+    await auditRepo.append(payAudit);
+    eventBus.emitEvent({ type: 'audit.appended', payload: payAudit });
+
+    if (updated) {
+      eventBus.emitEvent({ type: 'invoice.updated', payload: updated });
+    }
+
+    // Recompute forecast & broadcast updated event
+    const snapshot = await getCurrentSnapshot();
+    const engine = await getEngine();
+    const receipts = engine.expectedReceipts(snapshot.invoices, snapshot.payers, snapshot.business.asOf);
+    const forecast = engine.forecast({
+      business: snapshot.business,
+      obligations: snapshot.obligations,
+      receipts,
+      horizonDays: 30,
+    });
+    eventBus.emitEvent({ type: 'forecast.updated', payload: forecast });
+
+    return {
+      status: 'ok',
+      invoice: updated,
+      forecast,
+    };
+  });
+
+  // 15. Demo Reset
+  app.post('/api/demo/reset', async (request, reply) => {
     await resetDemoData();
     let provisioningResult;
     if (env.AUTO_PROVISION_PAYPAL) {
       provisioningResult = await provisionPayPal();
     }
-
-
-
-
-
-
-
 
     // Recompute forecast & broadcast updated event
     const snapshot = await getCurrentSnapshot();

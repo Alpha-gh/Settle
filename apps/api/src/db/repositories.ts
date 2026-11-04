@@ -271,11 +271,13 @@ export class ActionRecordRepository {
     });
   }
 
-  async update(id: Id, patch: Partial<ActionRecord>): Promise<ActionRecord> {
+  async update(idOrRecord: Id | ActionRecord, patch?: Partial<ActionRecord>): Promise<ActionRecord> {
+    const id = typeof idOrRecord === 'string' ? idOrRecord : idOrRecord.id;
+    const actualPatch = typeof idOrRecord === 'string' ? patch! : idOrRecord;
     const db = getDb();
     const [updated] = await db
       .update(actionRecords)
-      .set(patch)
+      .set(actualPatch)
       .where(eq(actionRecords.id, id))
       .returning();
 

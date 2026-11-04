@@ -86,6 +86,10 @@ export const EnvSchema = z
       .union([z.boolean(), z.string()])
       .transform((val) => (typeof val === 'boolean' ? val : val === 'true'))
       .default(false),
+    POLICY_IGNORE_QUIET_HOURS: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => (typeof val === 'boolean' ? val : val === 'true'))
+      .default(false),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== 'test') {

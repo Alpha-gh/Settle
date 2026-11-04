@@ -359,6 +359,17 @@ export const ActionDecisionBodySchema = z.object({
   note: z.string().optional(),
 });
 
+export const AgentRunRequestBodySchema = z
+  .object({
+    invoiceId: IdSchema.optional(),
+  })
+  .optional();
+
+export const SimulatePaymentBodySchema = z.object({
+  invoiceId: IdSchema,
+  amount: CentsSchema.optional(),
+});
+
 export const UpdatePolicyBodySchema = PolicySchema;
 
 // ── Error Response Schema ─────────────────────────────────────────────────
