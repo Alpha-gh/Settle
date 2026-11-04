@@ -58,40 +58,46 @@ call_endpoint "GET" "/api/dashboard"
 # 4. Invoices
 call_endpoint "GET" "/api/invoices"
 
-# 5. Agent run (cycle)
+# 5. Provision PayPal demo invoices
+call_endpoint "POST" "/api/demo/provision-paypal"
+
+# 6. Agent run (cycle)
 call_endpoint "POST" "/api/agent/run"
 
-# 6. Actions list
+# 7. Actions list
 call_endpoint "GET" "/api/actions"
 
-# 7. Action approve & reject
-call_endpoint "POST" "/api/actions/act_001/approve"
-call_endpoint "POST" "/api/actions/act_001/reject"
+# 8. Action approve & reject (dynamically select from action list if available)
+FIRST_ACTION_ID=$(curl -s "${BASE_URL}/api/actions" | grep -o '"id":"[^"]*' | head -n 1 | cut -d'"' -f4 || echo "act_001")
+SECOND_ACTION_ID=$(curl -s "${BASE_URL}/api/actions" | grep -o '"id":"[^"]*' | head -n 2 | tail -n 1 | cut -d'"' -f4 || echo "act_002")
 
-# 8. Simulate scenario
+if [ -n "$FIRST_ACTION_ID" ]; then
+  call_endpoint "POST" "/api/actions/${FIRST_ACTION_ID}/approve" '{"note":"Approved via smoke test"}'
+fi
+if [ -n "$SECOND_ACTION_ID" ]; then
+  call_endpoint "POST" "/api/actions/${SECOND_ACTION_ID}/reject" '{"note":"Rejected via smoke test"}'
+fi
+
+# 9. Simulate scenario (Contract v1 shape: { change: ScenarioChange })
 SIMULATE_PAYLOAD='{
-  "horizonDays": 14,
-  "changes": [
-    {
-      "type": "PAY_EARLY",
-      "invoiceId": "inv_001",
-      "expectedDay": 3,
-      "discountPct": 5
-    }
-  ]
+  "change": {
+    "type": "REMIND",
+    "invoiceId": "inv_001",
+    "newExpectedDate": "2026-11-08"
+  }
 }'
 call_endpoint "POST" "/api/simulate" "$SIMULATE_PAYLOAD"
 
-# 9. Chat
+# 10. Chat (Contract v1 shape: { question: string })
 CHAT_PAYLOAD='{
-  "message": "What is our cash forecast for the next 14 days?"
+  "question": "What is our cash forecast for the next 14 days?"
 }'
 call_endpoint "POST" "/api/chat" "$CHAT_PAYLOAD"
 
-# 10. Audit trail
+# 11. Audit trail
 call_endpoint "GET" "/api/audit"
 
-# 11. Policy get & update & restore
+# 12. Policy get & update & restore
 echo "Reading current policy..."
 ORIG_POLICY=$(curl -s "${BASE_URL}/api/policy" || echo "{}")
 call_endpoint "GET" "/api/policy"
@@ -112,7 +118,10 @@ call_endpoint "PUT" "/api/policy" "$POLICY_PAYLOAD"
 echo "Restoring original policy defaults..."
 call_endpoint "PUT" "/api/policy" "$ORIG_POLICY"
 
-# 12. PayPal Webhook
+# 13. Simulate demo payment against provisioned invoice
+call_endpoint "POST" "/api/demo/simulate-payment" '{"invoiceId":"inv_001","amount":50000}'
+
+# 14. PayPal Webhook
 WEBHOOK_PAYLOAD='{
   "id": "WH-SMOKE-TEST-001",
   "event_type": "INVOICING.INVOICE.PAID",
@@ -124,9 +133,9 @@ WEBHOOK_PAYLOAD='{
 }'
 call_endpoint "POST" "/api/webhooks/paypal" "$WEBHOOK_PAYLOAD"
 
-# 13. Demo Reset again
+# 15. Demo Reset again
 call_endpoint "POST" "/api/demo/reset"
 
 echo "=================================================="
-echo "Smoke test completed!"
+echo "Smoke test completed successfully!"
 echo "=================================================="
