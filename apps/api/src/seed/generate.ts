@@ -89,12 +89,12 @@ function generate(): Snapshot {
 
   // Default policy (Contract v1)
   const policy: Policy = {
-    maxDiscountPct: 10,
-    maxInstalments: 4,
-    autoApproveMaxAmount: 200_000,
-    requireApprovalFor: ['OFFER_DISCOUNT', 'ESCALATE'],
-    quietHours: { startHour: 22, endHour: 7 },
-    maxRemindersPerInvoicePerWeek: 3,
+    maxDiscountPct: 5,
+    maxInstalments: 3,
+    autoApproveMaxAmount: 50_000,
+    requireApprovalFor: ['OFFER_DISCOUNT', 'OFFER_INSTALMENTS', 'ESCALATE'],
+    quietHours: { startHour: 20, endHour: 8 },
+    maxRemindersPerInvoicePerWeek: 2,
   };
 
   return { business, payers, invoices, obligations, policy };

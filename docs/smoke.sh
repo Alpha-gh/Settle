@@ -91,13 +91,14 @@ call_endpoint "POST" "/api/chat" "$CHAT_PAYLOAD"
 # 10. Audit trail
 call_endpoint "GET" "/api/audit"
 
-# 11. Policy get & update
+# 11. Policy get & update & restore
+echo "Reading current policy..."
+ORIG_POLICY=$(curl -s "${BASE_URL}/api/policy" || echo "{}")
 call_endpoint "GET" "/api/policy"
 
 POLICY_PAYLOAD='{
   "maxDiscountPct": 12,
   "maxInstalments": 4,
-  "minInstalmentSpacingDays": 7,
   "quietHours": {
     "startHour": 20,
     "endHour": 8
@@ -107,6 +108,9 @@ POLICY_PAYLOAD='{
   "requireApprovalFor": ["OFFER_DISCOUNT"]
 }'
 call_endpoint "PUT" "/api/policy" "$POLICY_PAYLOAD"
+
+echo "Restoring original policy defaults..."
+call_endpoint "PUT" "/api/policy" "$ORIG_POLICY"
 
 # 12. PayPal Webhook
 WEBHOOK_PAYLOAD='{
@@ -126,4 +130,3 @@ call_endpoint "POST" "/api/demo/reset"
 echo "=================================================="
 echo "Smoke test completed!"
 echo "=================================================="
-

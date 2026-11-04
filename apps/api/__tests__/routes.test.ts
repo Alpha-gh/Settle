@@ -79,8 +79,16 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       });
       expect(res.statusCode).toBe(200);
       const policy = JSON.parse(res.payload);
-      expect(policy.maxDiscountPct).toBe(10);
-      expect(policy.maxInstalments).toBe(4);
+      expect(policy.maxDiscountPct).toBe(5);
+      expect(policy.maxInstalments).toBe(3);
+      expect(policy.autoApproveMaxAmount).toBe(50_000);
+      expect(policy.requireApprovalFor).toEqual([
+        'OFFER_DISCOUNT',
+        'OFFER_INSTALMENTS',
+        'ESCALATE',
+      ]);
+      expect(policy.quietHours).toEqual({ startHour: 20, endHour: 8 });
+      expect(policy.maxRemindersPerInvoicePerWeek).toBe(2);
     });
 
     it('PUT validates request body and rejects invalid policy', async () => {
@@ -507,6 +515,22 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       expect(json.status).toBe('ok');
       expect(json.business).toBe('Maya Studio');
       expect(json.invoicesCount).toBe(14);
+
+      // Verify policy is restored to default values
+      const polRes = await app.inject({
+        method: 'GET',
+        url: '/api/policy',
+      });
+      expect(polRes.statusCode).toBe(200);
+      const policy = JSON.parse(polRes.payload);
+      expect(policy.maxDiscountPct).toBe(5);
+      expect(policy.maxInstalments).toBe(3);
+      expect(policy.autoApproveMaxAmount).toBe(50_000);
+      expect(policy.requireApprovalFor).toEqual([
+        'OFFER_DISCOUNT',
+        'OFFER_INSTALMENTS',
+        'ESCALATE',
+      ]);
     });
   });
 });
