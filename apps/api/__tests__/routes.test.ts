@@ -44,7 +44,9 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       expect(json.business.currency).toBe('USD');
       expect(json.kpis.cash).toBe(980_000);
       expect(json.kpis.shortfall).toBe(200_000);
-      expect(json.overdueInvoices.length).toBe(8);
+      expect(json.invoices.length).toBe(14);
+      expect(json.payers.length).toBe(6);
+      expect(json.overdueInvoices).toBeUndefined();
       expect(json.obligations.length).toBe(3);
 
       // Validate schema compliance

@@ -153,13 +153,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
     const kpis = engine.kpis(snapshot);
 
-    const overdueInvoices = snapshot.invoices.filter(
-      (inv) =>
-        inv.dueDate < snapshot.business.asOf &&
-        inv.status !== 'PAID' &&
-        inv.status !== 'CANCELLED' &&
-        inv.status !== 'REFUNDED',
-    );
+
+
+
+
+
+
+
 
     const recentActions = await actionRepo.list();
     const auditLog = await auditRepo.list(50);
@@ -168,7 +168,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       business: snapshot.business,
       kpis,
       forecast,
-      overdueInvoices,
+      invoices: snapshot.invoices,
+      payers: snapshot.payers,
       obligations: snapshot.obligations,
       recentActions: recentActions.slice(0, 10),
       auditLog,
@@ -294,6 +295,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       },
       body.change,
     );
+
 
     return comparison;
   });
