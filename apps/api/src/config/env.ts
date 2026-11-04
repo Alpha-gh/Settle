@@ -81,6 +81,11 @@ export const EnvSchema = z
     PAYPAL_WEBHOOK_ID: z.string().optional(),
     PAYPAL_BUYER_EMAIL: z.string().optional(),
     PAYPAL_BUYER_PASSWORD: z.string().optional(),
+    DEMO_BUYER_INVOICE_IDS: z.string().default(''),
+    AUTO_PROVISION_PAYPAL: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => (typeof val === 'boolean' ? val : val === 'true'))
+      .default(false),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== 'test') {

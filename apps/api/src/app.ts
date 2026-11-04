@@ -1,7 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import { z } from 'zod';
-import type { Snapshot } from '@settle/shared';
+import { randomUUID } from 'node:crypto';
+import type { Snapshot, Payer, AuditEvent } from '@settle/shared';
 import { getEnv } from './config/env.js';
 import {
   BusinessRepository,
@@ -117,6 +118,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   async function getCurrentSnapshot(): Promise<Snapshot> {
     let business = await businessRepo.get();
     if (!business) {
+  
+
+
+
+
+
+
       await resetDemoData();
       business = (await businessRepo.get())!;
     }
@@ -378,9 +386,114 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   });
 
+  // Helper to provision PayPal invoices for SENT invoices missing paypalInvoiceId
+  async function provisionPayPal(): Promise<{
+    provisioned: number;
+    skipped: number;
+    failed: number;
+    failures: Array<{ invoiceId: string; error: string }>;
+  }> {
+
+    const allInvoices = await invoiceRepo.list();
+    const allPayers = await payerRepo.list();
+    const payerMap = new Map(allPayers.map((p) => [p.id, p]));
+
+    const demoBuyerInvoiceIds = env.DEMO_BUYER_INVOICE_IDS
+      ? env.DEMO_BUYER_INVOICE_IDS.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    let provisioned = 0;
+    let skipped = 0;
+    let failed = 0;
+    const failures: Array<{ invoiceId: string; error: string }> = [];
+
+    for (const inv of allInvoices) {
+      if (inv.status !== 'SENT' || inv.paypalInvoiceId) {
+        skipped++;
+        continue;
+      }
+
+      const payer = payerMap.get(inv.payerId);
+      if (!payer) {
+        failed++;
+        failures.push({ invoiceId: inv.id, error: `Payer ${inv.payerId} not found` });
+        continue;
+      }
+
+      const effectivePayer: Payer =
+        demoBuyerInvoiceIds.includes(inv.id) && env.PAYPAL_BUYER_EMAIL
+          ? { ...payer, email: env.PAYPAL_BUYER_EMAIL }
+          : payer;
+
+      try {
+        const res = await paypalClient.createAndSendInvoice(inv, effectivePayer);
+        const updatedInv = await invoiceRepo.update(inv.id, {
+          paypalInvoiceId: res.paypalInvoiceId,
+          payUrl: res.payUrl,
+        });
+
+        await historyRepo.record(inv.id, res.paypalInvoiceId, 'initial_provisioning');
+
+        const auditTrail = typeof (paypalClient as any).getAuditTrail === 'function'
+          ? (paypalClient as any).getAuditTrail()
+          : [];
+        const lastAudit = auditTrail[auditTrail.length - 1];
+
+        const provAudit: AuditEvent = {
+          id: randomUUID(),
+          ts: new Date().toISOString(),
+          actor: 'paypal',
+          kind: 'invoice.provisioned',
+          summary: `Invoice ${inv.number} provisioned in PayPal as ${res.paypalInvoiceId}`,
+          invoiceId: inv.id,
+          paypalRequestId: lastAudit?.paypalRequestId,
+          detail: {
+            paypalInvoiceId: res.paypalInvoiceId,
+            payUrl: res.payUrl,
+            recipientEmail: effectivePayer.email,
+          },
+        };
+        await auditRepo.append(provAudit);
+        eventBus.emitEvent({ type: 'audit.appended', payload: provAudit });
+
+        if (updatedInv) {
+          eventBus.emitEvent({ type: 'invoice.updated', payload: updatedInv });
+        }
+
+        provisioned++;
+        // Short delay between sequential provisioning requests
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (err: any) {
+        failed++;
+        failures.push({ invoiceId: inv.id, error: err?.message || String(err) });
+      }
+    }
+
+    return { provisioned, skipped, failed, failures };
+  }
+
+  // 14. Demo Provision PayPal
+  app.post('/api/demo/provision-paypal', async () => {
+    return provisionPayPal();
+  });
+
   // 13. Demo Reset
+  // Reset demo data handler
+  // auto-provisioning reset support
   app.post('/api/demo/reset', async (request, reply) => {
+
     await resetDemoData();
+    let provisioningResult;
+    if (env.AUTO_PROVISION_PAYPAL) {
+      provisioningResult = await provisionPayPal();
+    }
+
+
+
+
+
+
+
 
     // Recompute forecast & broadcast updated event
     const snapshot = await getCurrentSnapshot();
@@ -401,6 +514,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       business: snapshot.business.name,
       asOf: snapshot.business.asOf,
       invoicesCount: snapshot.invoices.length,
+      provisioning: provisioningResult,
     };
   });
 

@@ -10,6 +10,7 @@ import type {
 import { PayPalAuthenticator } from './auth.js';
 import { PayPalError, type PayPalErrorDetail } from './errors.js';
 import { centsToPayPalString, payPalStringToCents } from './money.js';
+import { getEnv } from '../config/env.js';
 
 export interface AuditRecord {
   operation: string;
@@ -48,8 +49,8 @@ export class PayPalClient implements PayPalPort {
     this.authenticator =
       options.authenticator ??
       new PayPalAuthenticator({
-        clientId: options.clientId,
-        clientSecret: options.clientSecret,
+        clientId: options.clientId ?? (options.authenticator ? '' : (process.env.PAYPAL_CLIENT_ID || getEnv().PAYPAL_CLIENT_ID)),
+        clientSecret: options.clientSecret ?? (options.authenticator ? '' : (process.env.PAYPAL_CLIENT_SECRET || getEnv().PAYPAL_CLIENT_SECRET)),
         baseUrl: this.baseUrl,
         fetchFn: this.fetchFn,
       });
