@@ -125,6 +125,20 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       const json = JSON.parse(res.payload);
       expect(json.maxDiscountPct).toBe(15);
       expect(json.maxInstalments).toBe(6);
+
+      // Restore default policy so subsequent tests run against baseline
+      await app.inject({
+        method: 'PUT',
+        url: '/api/policy',
+        payload: {
+          maxDiscountPct: 5,
+          maxInstalments: 3,
+          autoApproveMaxAmount: 50_000,
+          requireApprovalFor: ['OFFER_DISCOUNT', 'OFFER_INSTALMENTS', 'ESCALATE'],
+          quietHours: { startHour: 20, endHour: 8 },
+          maxRemindersPerInvoicePerWeek: 2,
+        },
+      });
     });
   });
 
@@ -218,20 +232,36 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       expect(list.length).toBeGreaterThan(0);
     });
 
-    it('POST /api/actions/:id/approve updates status to APPROVED', async () => {
+    it('POST /api/actions/:id/approve returns 409 NOT_PROVISIONED for unprovisioned PayPal actions', async () => {
       const listRes = await app.inject({ method: 'GET', url: '/api/actions' });
       const actions = JSON.parse(listRes.payload);
-      const target = actions[0];
+      const remindAction = actions.find((a) => a.type === 'REMIND');
 
       const res = await app.inject({
         method: 'POST',
-        url: `/api/actions/${target.id}/approve`,
+        url: '/api/actions/' + remindAction.id + '/approve',
         payload: { note: 'Approved by test' },
+      });
+
+      expect(res.statusCode).toBe(409);
+      const json = JSON.parse(res.payload);
+      expect(json.error.code).toBe('NOT_PROVISIONED');
+    });
+
+    it('POST /api/actions/:id/approve executes non-PayPal action (ESCALATE) without error', async () => {
+      const listRes = await app.inject({ method: 'GET', url: '/api/actions' });
+      const actions = JSON.parse(listRes.payload);
+      const escalateAction = actions.find((a) => a.type === 'ESCALATE');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/actions/' + escalateAction.id + '/approve',
+        payload: { note: 'Approved escalation' },
       });
 
       expect(res.statusCode).toBe(200);
       const updated = JSON.parse(res.payload);
-      expect(updated.status).toBe('APPROVED');
+      expect(updated.status).toBe('EXECUTED');
       expect(updated.decidedBy).toBe('owner');
     });
 

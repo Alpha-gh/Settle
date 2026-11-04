@@ -10,6 +10,6 @@ describe('loadSeedSnapshot', () => {
     expect(snapshot.payers).toHaveLength(6);
     expect(snapshot.invoices).toHaveLength(14);
     expect(snapshot.obligations).toHaveLength(3);
-    expect(snapshot.policy.maxDiscountPct).toBe(10);
+    expect(snapshot.policy.maxDiscountPct).toBe(5);
   });
 });
