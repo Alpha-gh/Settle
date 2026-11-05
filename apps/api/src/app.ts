@@ -124,6 +124,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       clientId: env.PAYPAL_CLIENT_ID,
       clientSecret: env.PAYPAL_CLIENT_SECRET,
       baseUrl: env.PAYPAL_BASE_URL,
+      useNumberSuffix: env.PAYPAL_NUMBER_SUFFIX,
       historyRepo,
     });
 
@@ -492,7 +493,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           payUrl: res.payUrl,
         });
 
-        await historyRepo.record(inv.id, res.paypalInvoiceId, 'initial_provisioning');
+        const paypalInvoiceNumber = (res as any).paypalInvoiceNumber;
+        await historyRepo.record(inv.id, res.paypalInvoiceId, 'initial_provisioning', paypalInvoiceNumber);
 
         const auditTrail = typeof (paypalClient as any).getAuditTrail === 'function'
           ? (paypalClient as any).getAuditTrail()
@@ -504,11 +506,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           ts: new Date().toISOString(),
           actor: 'paypal',
           kind: 'invoice.provisioned',
-          summary: `Invoice ${inv.number} provisioned in PayPal as ${res.paypalInvoiceId}`,
+          summary: `Invoice ${inv.number} provisioned in PayPal as ${res.paypalInvoiceId}${paypalInvoiceNumber ? ` (${paypalInvoiceNumber})` : ''}`,
           invoiceId: inv.id,
           paypalRequestId: lastAudit?.paypalRequestId,
           detail: {
             paypalInvoiceId: res.paypalInvoiceId,
+            paypalInvoiceNumber,
             payUrl: res.payUrl,
             recipientEmail: effectivePayer.email,
           },
@@ -525,7 +528,28 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (err: any) {
         failed++;
-        failures.push({ invoiceId: inv.id, error: err?.message || String(err) });
+        const failureItem: any = {
+          invoiceId: inv.id,
+          invoiceNumber: inv.number,
+          error: err?.message || String(err),
+        };
+        if (err?.name === 'PayPalError' || err?.paypalName || err?.debug_id || err?.debugId) {
+          failureItem.name = err.paypalName || err.name;
+          failureItem.debug_id = err.debug_id || err.debugId;
+          failureItem.issues = err.issues;
+          failureItem.details = err.details;
+        }
+        app.log.error({
+          msg: `Failed to provision PayPal invoice for ${inv.number}`,
+          invoiceId: inv.id,
+          invoiceNumber: inv.number,
+          error: failureItem.error,
+          paypalName: failureItem.name,
+          debug_id: failureItem.debug_id,
+          issues: failureItem.issues,
+          details: failureItem.details,
+        });
+        failures.push(failureItem);
       }
     }
 

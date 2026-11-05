@@ -116,10 +116,9 @@ export const auditEvents = pgTable('audit_events', {
 // ── PayPal Invoice IDs History ────────────────────────────────────────────
 export const invoicePayPalIds = pgTable('invoice_paypal_ids', {
   id: text('id').primaryKey(),
-  invoiceId: text('invoice_id')
-    .notNull()
-    .references(() => invoices.id),
+  invoiceId: text('invoice_id').notNull(),
   paypalInvoiceId: text('paypal_invoice_id').notNull(),
+  paypalInvoiceNumber: text('paypal_invoice_number'),
   createdAt: text('created_at').notNull(),
   replacedAt: text('replaced_at'),
   reason: text('reason'),
@@ -131,4 +130,3 @@ export const processedWebhookEvents = pgTable('processed_webhook_events', {
   eventType: text('event_type').notNull(),
   processedAt: timestamp('processed_at').notNull().defaultNow(),
 });
-

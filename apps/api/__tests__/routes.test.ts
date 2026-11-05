@@ -493,7 +493,7 @@ describe('API Routes & Contract v1 Integration Tests', () => {
         createdAt: new Date().toISOString(),
         replacedAt: new Date().toISOString(),
         reason: 'cancelled_and_reissued',
-      });
+      }).onConflictDoNothing();
 
       const customApp = await buildApp();
       await customApp.ready();

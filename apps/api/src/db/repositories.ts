@@ -338,15 +338,39 @@ export class InvoicePayPalIdRepository {
     invoiceId: Id,
     paypalInvoiceId: string,
     reason = 'initial_creation',
+    paypalInvoiceNumber?: string,
   ): Promise<void> {
     const db = getDb();
     await db.insert(invoicePayPalIds).values({
       id: `ipp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       invoiceId,
       paypalInvoiceId,
+      paypalInvoiceNumber: paypalInvoiceNumber ?? null,
       createdAt: new Date().toISOString(),
       reason,
     });
+  }
+
+  async isNumberUsed(paypalInvoiceNumber: string): Promise<boolean> {
+    const db = getDb();
+    const rows = await db
+      .select({ id: invoicePayPalIds.id })
+      .from(invoicePayPalIds)
+      .where(eq(invoicePayPalIds.paypalInvoiceNumber, paypalInvoiceNumber))
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async markAllReplaced(reason = 'demo reset'): Promise<void> {
+    const db = getDb();
+    const now = new Date().toISOString();
+    await db
+      .update(invoicePayPalIds)
+      .set({
+        replacedAt: now,
+        reason,
+      })
+      .where(isNull(invoicePayPalIds.replacedAt));
   }
 
   async findActive(invoiceId: Id): Promise<string | null> {

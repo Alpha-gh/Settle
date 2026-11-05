@@ -142,37 +142,42 @@ export class PayPalWebhookHandler {
       return { handled: true, duplicate: false };
     }
 
-    // Find corresponding Settle invoice
+    // Find corresponding Settle invoice and historical mapping
     const settleInvoice = await this.invoiceRepo.getByPayPalInvoiceId(paypalInvoiceId);
+    const historyEntry = await this.historyRepo.findByPayPalId(paypalInvoiceId);
+    const isSuperseded = !!historyEntry?.replacedAt;
+
+    // Task 3: Mark old rows as replaced so later CANCELLED or UPDATED webhooks for old PayPal invoices
+    // are logged as superseded and never alter new data.
+    if (isSuperseded && (eventType === 'INVOICING.INVOICE.CANCELLED' || eventType === 'INVOICING.INVOICE.UPDATED')) {
+      const targetInvoiceId = settleInvoice?.id ?? historyEntry?.invoiceId ?? 'unknown';
+      const kind = eventType === 'INVOICING.INVOICE.CANCELLED' ? 'invoice.superseded_cancelled' : 'invoice.superseded_updated';
+      const auditEvt: AuditEvent = {
+        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        ts: new Date().toISOString(),
+        actor: 'paypal',
+        kind,
+        summary: `Superseded invoice ${paypalInvoiceId} (${eventType}) received; active invoice ${targetInvoiceId} preserved.`,
+        invoiceId: targetInvoiceId,
+        paypalRequestId: eventId,
+        detail: { eventId, paypalInvoiceId, eventType, reason: (historyEntry as any)?.reason },
+      };
+
+      this.logger.info(
+        { paypalInvoiceId, eventType, targetInvoiceId },
+        `Superseded PayPal webhook ${eventType} handled without modifying active data`,
+      );
+
+      await this.auditRepo.append(auditEvt);
+      eventBus.emitEvent({ type: 'audit.appended', payload: auditEvt });
+      return { handled: true, duplicate: false };
+    }
+
     if (!settleInvoice) {
       this.logger.warn(
         { paypalInvoiceId, eventType },
         'No matching Settle invoice found for PayPal invoice ID',
       );
-      return { handled: true, duplicate: false };
-    }
-
-    // Check if this paypalInvoiceId was replaced / superseded
-    const historyEntry = await this.historyRepo.findByPayPalId(paypalInvoiceId);
-    const isSuperseded = !!historyEntry?.replacedAt;
-
-    if (eventType === 'INVOICING.INVOICE.CANCELLED' && isSuperseded) {
-      // "when a CANCELLED event arrives for a paypalInvoiceId that was deliberately replaced
-      // (replacedAt set, or part of an instalment plan), do not mark our invoice CANCELLED
-      // and do not raise an error; just log an audit event 'superseded invoice cancelled'."
-      const auditEvt: AuditEvent = {
-        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        ts: new Date().toISOString(),
-        actor: 'paypal',
-        kind: 'invoice.superseded_cancelled',
-        summary: `Superseded invoice ${paypalInvoiceId} cancelled on PayPal; active invoice ${settleInvoice.id} preserved.`,
-        invoiceId: settleInvoice.id,
-        paypalRequestId: eventId,
-        detail: { eventId, paypalInvoiceId },
-      };
-
-      await this.auditRepo.append(auditEvt);
-      eventBus.emitEvent({ type: 'audit.appended', payload: auditEvt });
       return { handled: true, duplicate: false };
     }
 
