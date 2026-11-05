@@ -58,3 +58,4 @@ USER node
 EXPOSE 3000
 
 CMD ["node", "apps/api/dist/index.js"]
+

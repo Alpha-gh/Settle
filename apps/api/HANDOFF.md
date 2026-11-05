@@ -199,3 +199,4 @@ The API decouples the engine and agent through modular adapters in `apps/api/src
 1. **Real LLM Agent Integration**: When `@settle/agent` is implemented, connect `GEMINI_API_KEY` or `OPENAI_API_KEY` to provide dynamic, tone-adapted reminder letter generation for chronic late payers.
 2. **Server-Sent Events (SSE)**: The API includes an in-memory event bus (`src/events/bus.ts`). Downstream teams can expose a `GET /api/events` SSE stream to trigger automatic browser dashboard refreshes when PayPal webhooks arrive.
 3. **Multi-Tenant Scoping**: The current schema is pre-scoped with foreign keys for `businessId` and `payerId`, but Maya Studio (`biz_001`) is currently the single tenant. Adding session authentication (e.g. Auth0) will allow multi-business operation.
+

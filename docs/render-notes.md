@@ -76,3 +76,4 @@ To receive live asynchronous payment notifications (`INVOICING.INVOICE.PAID`) wh
 9. Trigger a redeploy. Incoming webhooks will now be cryptographically verified against PayPal's public keys.
 
 > **Note on Sandbox Latency:** In PayPal Sandbox, webhooks are typically delivered between 15 and 90 seconds after payment completion. Settle's `POST /api/demo/simulate-payment` endpoint provides an instantaneous alternative for live demonstrations.
+

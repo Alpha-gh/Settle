@@ -163,3 +163,4 @@ curl -X GET "$BASE_URL/api/dashboard"
 - `kpis.shortfall`: `0` (Shortfall resolved!)
 - `invoices[0].status`: `"PAID"`
 - `invoices[0].amountPaid`: `350000`
+
