@@ -1,0 +1,61 @@
+# ==============================================================================
+# Settle Monorepo Multi-Stage Dockerfile (Production)
+# ==============================================================================
+
+# Stage 1: Build & Prepare
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Enable pnpm via corepack
+RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+
+# Copy root configuration and dependency manifests
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json tsconfig.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/shared/tsconfig.json ./packages/shared/
+COPY apps/api/package.json ./apps/api/
+COPY apps/api/tsconfig.json ./apps/api/
+
+# Install dependencies (frozen lockfile)
+RUN pnpm install --frozen-lockfile
+
+# Copy source code and seed fixtures
+COPY seed/ ./seed/
+COPY packages/shared/ ./packages/shared/
+COPY apps/api/ ./apps/api/
+
+# Build TypeScript packages
+RUN pnpm --filter @settle/shared build && pnpm --filter @settle/api build
+
+# Stage 2: Production Runner
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOST=0.0.0.0
+
+# Copy root workspace files for production install
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/api/package.json ./apps/api/
+
+# Install production-only dependencies
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy compiled artifacts from builder
+COPY seed/ ./seed/
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+
+# Secure unprivileged user
+USER node
+
+EXPOSE 3000
+
+CMD ["node", "apps/api/dist/index.js"]
+

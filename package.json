@@ -4,6 +4,8 @@
   "packageManager": "pnpm@10.11.0",
   "engines": { "node": ">=20" },
   "scripts": {
+    "build": "pnpm --filter @settle/shared build && pnpm --filter @settle/api build",
+    "start": "pnpm --filter @settle/api start",
     "typecheck": "tsc --build",
     "lint": "eslint .",
     "format": "prettier --write .",
