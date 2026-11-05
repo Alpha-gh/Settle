@@ -14,3 +14,4 @@ The API maintains `Business.startingBalance` dynamically as **current cash on ha
    - **Engine Team (`packages/engine`)**: Treat `input.business.startingBalance` directly as the business's current liquid cash position on day 0 (`business.asOf`). Inflows from already-settled payments are already factored into `startingBalance`; do not add already-paid amounts from past invoices into future receipt projections.
    - **Web Team (`apps/web`)**: Display `business.startingBalance` (and `kpis.cash`) directly as current cash on hand. When listening to Server-Sent Events (`forecast.updated` or `invoice.updated`), the updated dashboard payload will reflect the new cash balance and updated shortfall automatically.
    - **Demo Resets**: Calling `POST /api/demo/reset` truncates and restores `businesses.startingBalance` to the baseline Contract v1 seed scenario amount ($9,800.00 / 980,000 cents).
+
