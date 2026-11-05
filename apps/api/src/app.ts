@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import cors from '@fastify/cors';
@@ -25,6 +27,7 @@ import {
   AuditEventRepository,
   InvoicePayPalIdRepository,
 } from './db/repositories.js';
+import { getRawSql } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
@@ -52,27 +55,70 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const env = getEnv();
 
   const app = Fastify({
+    bodyLimit: 1048576, // 1MB body limit (Item 4)
     logger: {
       level: env.NODE_ENV === 'test' ? 'warn' : 'info',
       redact: ['req.headers.authorization', 'req.headers.cookie'],
     },
   });
 
-  // CORS
+  // Security Headers (Item 4)
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  });
+
+  // Rate Limiting (Item 4: POST routes 60/min, generous on /api/demo/*)
+  await app.register(rateLimit, {
+    max: 60,
+    timeWindow: '1 minute',
+    allowList: (req) => {
+      if (req.method !== 'POST') return true;
+      if (req.url.startsWith('/api/demo')) return true;
+      if (env.NODE_ENV === 'test' && req.headers['x-test-rate-limit'] !== 'true') {
+        return true;
+      }
+      return false;
+    },
+    errorResponseBuilder: (_req, context) => {
+      const err: any = new Error(`Rate limit exceeded, retry in ${context.after}`);
+      err.statusCode = 429;
+      err.code = 'RATE_LIMIT_EXCEEDED';
+      return err;
+    },
+  });
+
+  // CORS (Item 4)
   await app.register(cors, {
     origin: (origin, cb) => {
-      // allow requests with no origin (like mobile apps, curl, or same-origin)
       if (!origin) return cb(null, true);
-      if (origin === env.WEB_ORIGIN || origin.startsWith('http://localhost:')) {
+      if (origin === env.WEB_ORIGIN) return cb(null, true);
+      if (env.NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
         return cb(null, true);
       }
-      return cb(null, true);
+      return cb(new Error('Not allowed by CORS'), false);
     },
     credentials: true,
   });
 
-  // Global Error Handler formatting: { error: { code, message, details? } }
+  // Global Error Handler (Item 4: mask 500 stack traces in production)
   app.setErrorHandler((error: any, request, reply) => {
+    if (error?.statusCode === 429 || error?.code === 'RATE_LIMIT_EXCEEDED' || error?.code === 'FST_ERR_RATE_LIMIT_EXCEEDED') {
+      return reply.status(429).send({
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: error.message || 'Rate limit exceeded, retry later',
+        },
+      });
+    }
+
     let statusCode = 500;
     let code = 'INTERNAL_ERROR';
     let message = error?.message || 'An unexpected error occurred';
@@ -87,9 +133,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       statusCode = 409;
       code = 'NOT_PROVISIONED';
       message = error.message || 'Invoice is not provisioned in PayPal';
-    } else if (error?.statusCode) {
+    } else if (error?.statusCode && error.statusCode < 500) {
       statusCode = error.statusCode;
       code = error.code || 'HTTP_ERROR';
+      message = error.message;
+      details = error.details;
+    } else {
+      statusCode = error?.statusCode || 500;
+      code = 'INTERNAL_ERROR';
+      if (env.NODE_ENV === 'production') {
+        message = 'Internal server error';
+        details = undefined;
+      } else {
+        message = error?.message || 'An unexpected error occurred';
+        details = error?.stack;
+      }
     }
 
     reply.status(statusCode).send({
@@ -225,8 +283,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // ── Routes ──────────────────────────────────────────────────────────────
 
-  // Health check
-  app.get('/health', async () => ({ status: 'ok' }));
+  // Health check with Postgres connectivity check (Item 4)
+  app.get('/health', async (request, reply) => {
+    try {
+      const sql = getRawSql();
+      await sql`SELECT 1`;
+      return { status: 'ok', database: 'connected' };
+    } catch (err: any) {
+      app.log.error({ err }, 'Health check database query failed');
+      return reply.status(503).send({
+        status: 'error',
+        database: 'disconnected',
+        error: {
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Database unavailable',
+        },
+      });
+    }
+  });
 
   // 1. Dashboard
   app.get('/api/dashboard', async (request, reply) => {
