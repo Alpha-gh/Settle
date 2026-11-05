@@ -10,5 +10,5 @@
       "@settle/shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*", "test-support/**/*", "__tests__/**/*"]
+  "include": ["src/**/*", "test-support/**/*", "__tests__/**/*", "tests/**/*"]
 }

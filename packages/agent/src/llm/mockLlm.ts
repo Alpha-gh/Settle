@@ -10,6 +10,7 @@ export type MockLlmMode =
 export interface MockLlmOptions {
   mode?: MockLlmMode;
   slowDelayMs?: number;
+  info?: { provider: string; model: string };
 }
 
 export interface CandidateOption {
@@ -101,34 +102,41 @@ export function extractCandidatesFromPrompt(userPrompt: string): {
     // Not valid JSON, proceed to text parsing
   }
 
-  // 2. Line-by-line / text regex extraction
+  // 2. Multiline candidate blocks or line-by-line extraction
   const candidates: CandidateOption[] = [];
-  const lines = userPrompt.split('\n');
+  const candidateBlocks = userPrompt.split(/(?=(?:^|\n)\s*-\s*)/);
 
-  for (const line of lines) {
-    const idMatch =
-      line.match(/(?:id[:=\s"']*|candidate[:=\s"']*|option[:=\s"']*)(opt[_\w\d-]+|[a-zA-Z0-9_-]+)/i) ||
-      line.match(/\b(opt[_\w\d-]+)\b/);
+  for (const block of candidateBlocks) {
+    const idMatch = block.match(
+      /-\s*(?:Option\s*ID[:=\s"']*|candidate[:=\s"']*|option[:=\s"']*|id[:=\s"']*)?([a-zA-Z0-9_-]+)/i,
+    );
 
     if (idMatch?.[1]) {
       const id = idMatch[1];
-      const closesGapMatch = line.match(/closesGap[:=\s"']*(true|false)/i);
-      const cashCostMatch = line.match(/cashCost[:=\s"']*(-?\d+)/i);
-      const lowestDeltaMatch = line.match(/lowestDelta[:=\s"']*(-?\d+)/i);
+      const closesGapMatch = block.match(/closes\s*Gap[:=\s"']*(true|false)/i);
+      const cashCostMatch = block.match(/cash\s*Cost[:=\s"']*(-?\d+)/i);
+      const lowestDeltaMatch = block.match(/lowest\s*Delta[:=\s"']*(-?\d+)/i);
 
-      if (closesGapMatch || cashCostMatch || lowestDeltaMatch) {
+      if (closesGapMatch || cashCostMatch || lowestDeltaMatch || id === 'escalate') {
         candidates.push({
           id,
-          closesGap: closesGapMatch ? closesGapMatch[1]?.toLowerCase() === 'true' : false,
+          closesGap: closesGapMatch
+            ? closesGapMatch[1]?.toLowerCase() === 'true'
+            : false,
           cashCost: cashCostMatch?.[1] ? parseInt(cashCostMatch[1], 10) : 0,
-          lowestDelta: lowestDeltaMatch?.[1] ? parseInt(lowestDeltaMatch[1], 10) : 0,
+          lowestDelta: lowestDeltaMatch?.[1]
+            ? parseInt(lowestDeltaMatch[1], 10)
+            : 0,
         });
       }
     }
   }
 
-  const unique = Array.from(new Map(candidates.map((c) => [c.id, c])).values());
-  const hasGap = !userPrompt.includes('shortfall: 0') && !userPrompt.includes('gap: false');
+  const unique = Array.from(
+    new Map(candidates.map((c) => [c.id, c])).values(),
+  );
+  const hasGap =
+    !userPrompt.includes('shortfall: 0') && !userPrompt.includes('gap: false');
 
   return { candidates: unique, hasGap };
 }
@@ -136,10 +144,12 @@ export function extractCandidatesFromPrompt(userPrompt: string): {
 export class MockLlm implements LlmPort {
   readonly mode: MockLlmMode;
   readonly slowDelayMs: number;
+  readonly info: { readonly provider: string; readonly model: string };
 
   constructor(options: MockLlmOptions = {}) {
     this.mode = options.mode ?? 'good';
     this.slowDelayMs = options.slowDelayMs ?? 100;
+    this.info = options.info ?? { provider: 'mock', model: 'mock-model' };
   }
 
   async generateStructured<R>(a: {
@@ -155,7 +165,23 @@ export class MockLlm implements LlmPort {
       await new Promise((resolve) => setTimeout(resolve, this.slowDelayMs));
     }
 
+    const hasStrictSchema =
+      (a.jsonSchema as any)?.additionalProperties === false &&
+      (a.jsonSchema as any)?.properties;
+    const allowedProps = hasStrictSchema
+      ? Object.keys((a.jsonSchema as any).properties)
+      : [];
+
     if (this.mode === 'unknownId') {
+      if (hasStrictSchema) {
+        const out: Record<string, unknown> = {};
+        if (allowedProps.includes('optionId')) out['optionId'] = 'opt_unknown_999';
+        if (allowedProps.includes('selectedOptionId'))
+          out['selectedOptionId'] = 'opt_unknown_999';
+        if (allowedProps.includes('reason'))
+          out['reason'] = 'Selected option opt_unknown_999 not present in facts';
+        return out as unknown as R;
+      }
       return {
         selectedOptionId: 'opt_unknown_999',
         optionId: 'opt_unknown_999',
@@ -169,6 +195,15 @@ export class MockLlm implements LlmPort {
 
     if (this.mode === 'ungroundedNumber') {
       const selectedId = chosen ? chosen.id : 'opt_1';
+      if (hasStrictSchema) {
+        const out: Record<string, unknown> = {};
+        if (allowedProps.includes('optionId')) out['optionId'] = selectedId;
+        if (allowedProps.includes('selectedOptionId'))
+          out['selectedOptionId'] = selectedId;
+        if (allowedProps.includes('reason'))
+          out['reason'] = 'Discount of 99999% saving $999,999.00';
+        return out as unknown as R;
+      }
       return {
         selectedOptionId: selectedId,
         optionId: selectedId,
@@ -179,6 +214,13 @@ export class MockLlm implements LlmPort {
 
     // Default 'good' mode
     if (!chosen) {
+      if (hasStrictSchema) {
+        const out: Record<string, unknown> = {};
+        if (allowedProps.includes('optionId')) out['optionId'] = 'escalate';
+        if (allowedProps.includes('reason'))
+          out['reason'] = 'No candidate options provided in facts';
+        return out as unknown as R;
+      }
       return {
         selectedOptionId: null,
         optionId: null,
@@ -190,6 +232,15 @@ export class MockLlm implements LlmPort {
     const reason = chosen.closesGap
       ? `Selected ${chosen.id}: closes the cashflow gap with lowest cash cost of ${chosen.cashCost} cents and lowest delta of ${chosen.lowestDelta} cents.`
       : `Selected ${chosen.id}: provides largest lowest delta of ${chosen.lowestDelta} cents with cash cost of ${chosen.cashCost} cents.`;
+
+    if (hasStrictSchema) {
+      const out: Record<string, unknown> = {};
+      if (allowedProps.includes('optionId')) out['optionId'] = chosen.id;
+      if (allowedProps.includes('selectedOptionId'))
+        out['selectedOptionId'] = chosen.id;
+      if (allowedProps.includes('reason')) out['reason'] = reason;
+      return out as unknown as R;
+    }
 
     const result: Record<string, unknown> = {
       selectedOptionId: chosen.id,
@@ -218,8 +269,7 @@ export class MockLlm implements LlmPort {
     text: string;
     toolCalls: { name: string; args: unknown; result: unknown }[];
   }> {
-    // TODO: Implement runWithTools in Stage 2/3
+    // TODO: Implement runWithTools in Stage 3
     throw new Error('NotImplemented: runWithTools is not implemented yet');
   }
 }
-

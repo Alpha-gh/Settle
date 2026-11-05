@@ -3,8 +3,14 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/agent/src/index.js",
+  "types": "./dist/agent/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/agent/src/index.d.ts",
+      "import": "./dist/agent/src/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -12,7 +18,8 @@
     "eval": "node -e \"console.log('eval stub')\""
   },
   "dependencies": {
-    "@settle/shared": "workspace:*"
+    "@settle/shared": "workspace:*",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
@@ -20,4 +27,3 @@
     "vitest": "^3.0.0"
   }
 }
-
