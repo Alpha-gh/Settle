@@ -30,6 +30,7 @@ import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
 import { PayPalWebhookHandler } from './paypal/webhook.js';
 import { ActionService, NotProvisionedError } from './services/actions.js';
+import { PaymentReconciliationService } from './services/reconciliation.js';
 import {
   SimulateRequestBodySchema,
   ChatRequestBodySchema,
@@ -128,6 +129,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       historyRepo,
     });
 
+  const reconcileService = new PaymentReconciliationService(paypalClient);
+
   const actionService = new ActionService(
     actionRepo,
     invoiceRepo,
@@ -138,7 +141,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     paypalClient,
   );
 
-  const webhookHandler = new PayPalWebhookHandler(paypalClient as any, app.log);
+  const webhookHandler = new PayPalWebhookHandler(paypalClient as any, app.log, reconcileService);
 
   // Helper to construct current snapshot from DB
   async function getCurrentSnapshot(): Promise<Snapshot> {
@@ -594,51 +597,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       );
     }
 
-    // Immediately reconcile with getInvoice; never wait for webhooks
-    const reconciled = await paypalClient.getInvoice(invoice.paypalInvoiceId);
-
-    const updated = await invoiceRepo.update(invoice.id, {
-      status: reconciled.status,
-      amountPaid: reconciled.amountPaid,
-    });
-
-    const payAudit: AuditEvent = {
-      id: randomUUID(),
-      ts: new Date().toISOString(),
-      actor: 'paypal',
-      kind: 'invoice.paid',
-      summary: `Payment of $${(paymentAmount / 100).toFixed(2)} recorded for invoice ${invoice.number} (status: ${reconciled.status})`,
+    // Immediately reconcile via single shared reconciliation path
+    const result = await reconcileService.reconcileInvoicePayment({
       invoiceId: invoice.id,
+      paypalInvoiceId: invoice.paypalInvoiceId,
+      actor: 'paypal',
+      eventType: 'invoice.paid',
       paypalRequestId: paymentResult?.paypalRequestId,
-      detail: {
+      extraDetail: {
         paymentAmount,
-        reconciledStatus: reconciled.status,
-        reconciledAmountPaid: reconciled.amountPaid,
+        paymentId: paymentResult?.paymentId,
+        simulated: true,
       },
-    };
-    await auditRepo.append(payAudit);
-    eventBus.emitEvent({ type: 'audit.appended', payload: payAudit });
-
-    if (updated) {
-      eventBus.emitEvent({ type: 'invoice.updated', payload: updated });
-    }
-
-    // Recompute forecast & broadcast updated event
-    const snapshot = await getCurrentSnapshot();
-    const engine = await getEngine();
-    const receipts = engine.expectedReceipts(snapshot.invoices, snapshot.payers, snapshot.business.asOf);
-    const forecast = engine.forecast({
-      business: snapshot.business,
-      obligations: snapshot.obligations,
-      receipts,
-      horizonDays: 30,
     });
-    eventBus.emitEvent({ type: 'forecast.updated', payload: forecast });
 
     return {
       status: 'ok',
-      invoice: updated,
-      forecast,
+      invoice: result.invoice,
+      forecast: result.forecast,
+      delta: result.delta,
+      newCashBalance: result.newBalance,
     };
   });
 
