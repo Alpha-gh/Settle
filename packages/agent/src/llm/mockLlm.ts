@@ -1,11 +1,13 @@
 import type { LlmPort } from '@settle/shared';
+import { formatUsd } from '../format.js';
 
 export type MockLlmMode =
   | 'good'
   | 'invalidJson'
   | 'unknownId'
   | 'ungroundedNumber'
-  | 'slow';
+  | 'slow'
+  | 'noPayUrl';
 
 export interface MockLlmOptions {
   mode?: MockLlmMode;
@@ -165,6 +167,36 @@ export class MockLlm implements LlmPort {
       await new Promise((resolve) => setTimeout(resolve, this.slowDelayMs));
     }
 
+    // Handle draft note requests (title === 'draft_note')
+    const schemaTitle = (a.jsonSchema as any)?.title;
+    if (schemaTitle === 'draft_note') {
+      if (this.mode === 'noPayUrl') {
+        return {
+          note: 'Hello, please settle your overdue balance by visiting our payment portal at https://settle.dev/pay. Thank you!',
+        } as unknown as R;
+      }
+      if (this.mode === 'ungroundedNumber') {
+        return {
+          note: 'Hello, you have an outstanding balance of $999,999.00 with a 99999% discount. Please pay here: {{PAY_URL}}.',
+        } as unknown as R;
+      }
+
+      const invoiceNumMatch = a.user.match(/(?:Invoice:\s*|Invoice Number:\s*)([A-Z0-9_-]+)/i);
+      const invNumber = invoiceNumMatch?.[1] ?? 'INV-1001';
+      const isDiscount = /OFFER_DISCOUNT/i.test(a.user);
+      const isInstalments = /OFFER_INSTALMENTS/i.test(a.user);
+
+      let note = `Hello, this is a reminder regarding invoice ${invNumber}. You can review and settle your payment securely here: {{PAY_URL}}. Thank you!`;
+      if (isDiscount) {
+        note = `Hello, regarding invoice ${invNumber}, we are pleased to offer a discount to accelerate settlement. You can pay here: {{PAY_URL}}. Thank you!`;
+      } else if (isInstalments) {
+        note = `Hello, regarding invoice ${invNumber}, we can offer instalment options to assist with repayment. You can arrange your plan here: {{PAY_URL}}. Thank you!`;
+      }
+
+      return { note } as unknown as R;
+    }
+
+    // Handle decision requests
     const hasStrictSchema =
       (a.jsonSchema as any)?.additionalProperties === false &&
       (a.jsonSchema as any)?.properties;
@@ -179,14 +211,14 @@ export class MockLlm implements LlmPort {
         if (allowedProps.includes('selectedOptionId'))
           out['selectedOptionId'] = 'opt_unknown_999';
         if (allowedProps.includes('reason'))
-          out['reason'] = 'Selected option opt_unknown_999 not present in facts';
+          out['reason'] = 'Selected unknown option opt_unknown_999 not present in facts';
         return out as unknown as R;
       }
       return {
         selectedOptionId: 'opt_unknown_999',
         optionId: 'opt_unknown_999',
         id: 'opt_unknown_999',
-        reason: 'Selected option opt_unknown_999 not present in facts',
+        reason: 'Selected unknown option opt_unknown_999 not present in facts',
       } as unknown as R;
     }
 
@@ -201,14 +233,14 @@ export class MockLlm implements LlmPort {
         if (allowedProps.includes('selectedOptionId'))
           out['selectedOptionId'] = selectedId;
         if (allowedProps.includes('reason'))
-          out['reason'] = 'Discount of 99999% saving $999,999.00';
+          out['reason'] = 'Offering 99999% discount saving $999,999.00.';
         return out as unknown as R;
       }
       return {
         selectedOptionId: selectedId,
         optionId: selectedId,
         id: selectedId,
-        reason: 'Discount of 99999% saving $999,999.00',
+        reason: 'Offering 99999% discount saving $999,999.00.',
       } as unknown as R;
     }
 
@@ -229,9 +261,15 @@ export class MockLlm implements LlmPort {
       } as unknown as R;
     }
 
+    const invoiceNumMatch = a.user.match(/(?:Invoice Number:\s*|Invoice:\s*)([A-Z0-9_-]+)/i);
+    const invLabel = invoiceNumMatch?.[1] ? ` for invoice ${invoiceNumMatch[1]}` : '';
+
+    const deltaUsd = formatUsd(chosen.lowestDelta);
+    const costUsd = formatUsd(chosen.cashCost);
+
     const reason = chosen.closesGap
-      ? `Selected ${chosen.id}: closes the cashflow gap with lowest cash cost of ${chosen.cashCost} cents and lowest delta of ${chosen.lowestDelta} cents.`
-      : `Selected ${chosen.id}: provides largest lowest delta of ${chosen.lowestDelta} cents with cash cost of ${chosen.cashCost} cents.`;
+      ? `Selecting action${invLabel} to close the cashflow gap, yielding ${deltaUsd} in cash at a cost of ${costUsd}.`
+      : `Selecting action${invLabel} to improve cash balance by ${deltaUsd} at a cost of ${costUsd}.`;
 
     if (hasStrictSchema) {
       const out: Record<string, unknown> = {};
@@ -269,7 +307,6 @@ export class MockLlm implements LlmPort {
     text: string;
     toolCalls: { name: string; args: unknown; result: unknown }[];
   }> {
-    // TODO: Implement runWithTools in Stage 3
     throw new Error('NotImplemented: runWithTools is not implemented yet');
   }
 }

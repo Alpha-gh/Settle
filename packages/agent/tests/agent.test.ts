@@ -244,8 +244,11 @@ describe('SettleAgent runCycle', () => {
     const agent = createAgent({ engine, llm, clock });
     const result = await agent.runCycle(snapshot);
 
-    // Initial call + 1 retry = 2 calls
-    expect(generateSpy).toHaveBeenCalledTimes(2);
+    // Initial call + 1 retry for decision = 2 decision calls (+ 1 draftNote call)
+    const decisionCalls = generateSpy.mock.calls.filter(
+      (c) => 'optionId' in ((c[0].jsonSchema as any).properties || {}),
+    );
+    expect(decisionCalls).toHaveLength(2);
     expect(result.actions).toHaveLength(1);
     const action = result.actions[0]!;
     // Fallback chose a valid listed option, not unknownId

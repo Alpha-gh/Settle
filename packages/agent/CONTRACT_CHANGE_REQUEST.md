@@ -14,7 +14,7 @@ This document tracks requests for enhancements and additions to `@settle/shared`
     meta?: {
       provider: string;
       model: string;
-      path: 'llm' | 'fallback';
+      path: 'llm' | 'fallback' | 'rules';
     };
   }
   ```

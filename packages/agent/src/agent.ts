@@ -16,9 +16,15 @@ import type {
 } from '@settle/shared';
 import { evaluatePolicy } from '@settle/shared';
 import { SystemClock, type Clock } from './clock.js';
+import { draftNote } from './draftNote.js';
 import { deterministicChoice, templatedReason } from './fallback.js';
 import { applyChosenChange } from './foldChange.js';
 import { formatUsd } from './format.js';
+import {
+  buildAllowedSet,
+  checkGrounding,
+  type GroundingFactsInput,
+} from './grounding.js';
 import { DeterministicIdGen, type IdGen } from './ids.js';
 import { buildCandidates, type Candidate } from './options.js';
 import {
@@ -43,6 +49,14 @@ export interface CreateAgentOptions {
   policy?: Policy;
 }
 
+export interface AgentRunMetrics {
+  decisions: number;
+  llmValid: number;
+  retries: number;
+  fallbacks: number;
+  groundingFailures: number;
+}
+
 export class SettleAgent implements AgentPort {
   private readonly engine: EnginePort;
   private readonly llm: ExtendedLlmPort;
@@ -50,6 +64,13 @@ export class SettleAgent implements AgentPort {
   private readonly idGen: IdGen;
   private readonly remindersLookup: (invoiceId: Id) => number;
   private readonly defaultPolicy?: Policy;
+  private lastRunMetrics: AgentRunMetrics = {
+    decisions: 0,
+    llmValid: 0,
+    retries: 0,
+    fallbacks: 0,
+    groundingFailures: 0,
+  };
 
   constructor(options: CreateAgentOptions) {
     this.engine = options.engine;
@@ -60,13 +81,25 @@ export class SettleAgent implements AgentPort {
     this.defaultPolicy = options.policy;
   }
 
+  getLastRunMetrics(): AgentRunMetrics {
+    return { ...this.lastRunMetrics };
+  }
+
   async runCycle(snapshot: Snapshot): Promise<AgentRunResult> {
     const runId = this.idGen.next('run');
     const policy = this.defaultPolicy ?? snapshot.policy;
     const actions: ActionRecord[] = [];
     const skipped: { invoiceId: Id; why: string }[] = [];
 
-    // 1. Select overdue invoices: dueDate < asOf && status in (SENT, PARTIALLY_PAID) && (amount - amountPaid) > 0
+    this.lastRunMetrics = {
+      decisions: 0,
+      llmValid: 0,
+      retries: 0,
+      fallbacks: 0,
+      groundingFailures: 0,
+    };
+
+    // 1. Select overdue invoices
     const overdueInvoices: Invoice[] = [];
     for (const inv of snapshot.invoices) {
       const isOverdueDate = inv.dueDate < snapshot.business.asOf;
@@ -114,6 +147,7 @@ export class SettleAgent implements AgentPort {
     // 3. Process each overdue invoice
     for (const invoice of overdueInvoices) {
       try {
+        this.lastRunMetrics.decisions += 1;
         const payer = payerMap.get(invoice.payerId);
         if (!payer) {
           skipped.push({
@@ -134,7 +168,7 @@ export class SettleAgent implements AgentPort {
         );
 
         if (options.length === 0) {
-          // ESCALATE with templated reason from snapshot data. No LLM call.
+          // ESCALATE with templated reason from snapshot data. No LLM call -> path=rules.
           const escalateReason = `Payer persona ${payer.persona} is unresponsive. Escalating invoice ${invoice.number} (${formatUsd(remaining)} due ${invoice.dueDate}) for manual collection.`;
           const actionType: ActionType = 'ESCALATE';
           const actionParams: ActionParams = {
@@ -165,11 +199,7 @@ export class SettleAgent implements AgentPort {
             decidedBy = 'auto';
           }
 
-          const llmInfo = this.llm.info ?? {
-            provider: 'mock',
-            model: 'mock-model',
-          };
-          fullReason = `${fullReason} [via provider=${llmInfo.provider}; model=${llmInfo.model}; path=fallback]`;
+          fullReason = `${fullReason} [via rules; path=rules]`;
 
           actions.push({
             id: this.idGen.next('act'),
@@ -196,10 +226,11 @@ export class SettleAgent implements AgentPort {
         const candidateIds = candidates.map((c) => c.id);
         const { jsonSchema, validator } = buildDecisionSchema(candidateIds);
 
-        // 3d. LLM decision with retry ONCE, then deterministic fallback
+        // 3d. LLM decision with retry ONCE + grounding check, then deterministic fallback
         let chosenCandidate: Candidate | null = null;
         let modelReason = '';
         let path: 'llm' | 'fallback' = 'llm';
+        let groundingFailed = false;
 
         const system = buildSystemPrompt();
         const user = buildUserPrompt({
@@ -208,8 +239,8 @@ export class SettleAgent implements AgentPort {
           candidates,
         });
 
-        // Attempt 1
         try {
+          // Attempt 1
           const raw = await this.llm.generateStructured<{
             optionId: string;
             reason: string;
@@ -223,19 +254,85 @@ export class SettleAgent implements AgentPort {
           if (parsed.success) {
             const found = candidates.find((c) => c.id === parsed.data.optionId);
             if (found) {
-              chosenCandidate = found;
-              modelReason = parsed.data.reason;
+              const candFacts: GroundingFactsInput = {
+                invoice,
+                payer,
+                change: found.change,
+                cashCost: found.cashCost,
+                lowestDelta: found.lowestDelta,
+                shortfallDelta: found.shortfallDelta,
+                asOf: snapshot.business.asOf,
+              };
+              const candAllowed = buildAllowedSet(candFacts);
+              const groundCheck = checkGrounding(parsed.data.reason, candAllowed);
+
+              if (groundCheck.ok) {
+                chosenCandidate = found;
+                modelReason = parsed.data.reason;
+                this.lastRunMetrics.llmValid += 1;
+              } else {
+                groundingFailed = true;
+                this.lastRunMetrics.groundingFailures += 1;
+                this.lastRunMetrics.retries += 1;
+
+                // Retry ONCE with feedback on ungrounded offenders
+                const retryPrompt = `${user}\n\nPREVIOUS REASON FAILED GROUNDING: Contains ungrounded tokens: ${groundCheck.offenders.join(', ')}.\nPlease remove these ungrounded values and quote only verified facts.`;
+                const retryRaw = await this.llm.generateStructured<{
+                  optionId: string;
+                  reason: string;
+                }>({
+                  system,
+                  user: retryPrompt,
+                  jsonSchema,
+                });
+
+                const retryParsed = validator.safeParse(retryRaw);
+                if (retryParsed.success) {
+                  const retryFound = candidates.find(
+                    (c) => c.id === retryParsed.data.optionId,
+                  );
+                  if (retryFound) {
+                    const retryAllowed = buildAllowedSet({
+                      invoice,
+                      payer,
+                      change: retryFound.change,
+                      cashCost: retryFound.cashCost,
+                      lowestDelta: retryFound.lowestDelta,
+                      shortfallDelta: retryFound.shortfallDelta,
+                      asOf: snapshot.business.asOf,
+                    });
+                    const retryGround = checkGrounding(
+                      retryParsed.data.reason,
+                      retryAllowed,
+                    );
+                    if (retryGround.ok) {
+                      chosenCandidate = retryFound;
+                      modelReason = retryParsed.data.reason;
+                      this.lastRunMetrics.llmValid += 1;
+                    } else {
+                      this.lastRunMetrics.groundingFailures += 1;
+                      // Keep model's chosen option if valid, but fall back to templated reason
+                      path = 'fallback';
+                      this.lastRunMetrics.fallbacks += 1;
+                      chosenCandidate = retryFound;
+                      modelReason = templatedReason(retryFound, invoice);
+                    }
+                  }
+                }
+              }
             }
           }
 
-          // Retry ONCE if invalid
-          if (!chosenCandidate) {
+          // Retry ONCE if invalid schema or optionId
+          if (!chosenCandidate && !groundingFailed) {
+            this.lastRunMetrics.retries += 1;
+            const retryPrompt = `${user}\n\nPREVIOUS ATTEMPT WAS INVALID. Please choose one valid optionId and reason.`;
             const retryRaw = await this.llm.generateStructured<{
               optionId: string;
               reason: string;
             }>({
               system,
-              user,
+              user: retryPrompt,
               jsonSchema,
             });
 
@@ -245,23 +342,43 @@ export class SettleAgent implements AgentPort {
                 (c) => c.id === retryParsed.data.optionId,
               );
               if (found) {
-                chosenCandidate = found;
-                modelReason = retryParsed.data.reason;
+                const candAllowed = buildAllowedSet({
+                  invoice,
+                  payer,
+                  change: found.change,
+                  cashCost: found.cashCost,
+                  lowestDelta: found.lowestDelta,
+                  shortfallDelta: found.shortfallDelta,
+                  asOf: snapshot.business.asOf,
+                });
+                const groundCheck = checkGrounding(retryParsed.data.reason, candAllowed);
+                if (groundCheck.ok) {
+                  chosenCandidate = found;
+                  modelReason = retryParsed.data.reason;
+                  this.lastRunMetrics.llmValid += 1;
+                } else {
+                  this.lastRunMetrics.groundingFailures += 1;
+                  path = 'fallback';
+                  this.lastRunMetrics.fallbacks += 1;
+                  chosenCandidate = found;
+                  modelReason = templatedReason(found, invoice);
+                }
               }
             }
           }
         } catch {
-          // LLM failure; proceed to fallback
+          // LLM call threw error; proceed to fallback
         }
 
-        // Fallback if LLM produced invalid output or failed
+        // Complete fallback if LLM produced no valid candidate
         if (!chosenCandidate) {
           path = 'fallback';
+          this.lastRunMetrics.fallbacks += 1;
           chosenCandidate = deterministicChoice(candidates);
           modelReason = templatedReason(chosenCandidate, invoice);
         }
 
-        // 3e. Map chosen change to ActionType and ActionParams
+        // 3e. Map chosen change to ActionType and preliminary ActionParams
         let actionType: ActionType;
         let actionParams: ActionParams = {};
 
@@ -300,7 +417,47 @@ export class SettleAgent implements AgentPort {
           }
         }
 
-        // 3f. Evaluate policy
+        // Pre-evaluate policy to check if blocked
+        const prelimVerdict = evaluatePolicy(
+          { type: actionType, params: actionParams },
+          invoice,
+          policy,
+          {
+            now: this.clock.now(),
+            remindersLastWeek: this.remindersLookup(invoice.id),
+          },
+        );
+
+        // Generate draft note for non-BLOCKED REMIND, OFFER_DISCOUNT, and OFFER_INSTALMENTS
+        if (
+          prelimVerdict.allowed &&
+          (actionType === 'REMIND' ||
+            actionType === 'OFFER_DISCOUNT' ||
+            actionType === 'OFFER_INSTALMENTS')
+        ) {
+          const candFacts: GroundingFactsInput = {
+            invoice,
+            payer,
+            change: chosenCandidate.change,
+            cashCost: chosenCandidate.cashCost,
+            lowestDelta: chosenCandidate.lowestDelta,
+            shortfallDelta: chosenCandidate.shortfallDelta,
+            asOf: snapshot.business.asOf,
+          };
+
+          const note = await draftNote(
+            {
+              action: { type: actionType, params: actionParams },
+              invoice,
+              payer,
+              facts: candFacts,
+            },
+            this.llm,
+          );
+          actionParams.note = note;
+        }
+
+        // 3f. Final policy evaluation (sees final note)
         const verdict = evaluatePolicy(
           { type: actionType, params: actionParams },
           invoice,
@@ -327,11 +484,19 @@ export class SettleAgent implements AgentPort {
         }
 
         // 3h. Append provenance suffix
-        const llmInfo = this.llm.info ?? {
-          provider: 'mock',
-          model: 'mock-model',
-        };
-        fullReason = `${fullReason} [via provider=${llmInfo.provider}; model=${llmInfo.model}; path=${path}]`;
+        if (path === 'llm') {
+          const llmInfo = this.llm.info ?? {
+            provider: 'mock',
+            model: 'mock-model',
+          };
+          fullReason = `${fullReason} [via provider=${llmInfo.provider}; model=${llmInfo.model}; path=llm]`;
+        } else {
+          const llmInfo = this.llm.info ?? {
+            provider: 'mock',
+            model: 'mock-model',
+          };
+          fullReason = `${fullReason} [via provider=${llmInfo.provider}; model=${llmInfo.model}; path=fallback]`;
+        }
 
         // 3i. Fold change if not blocked
         if (status !== 'BLOCKED' && chosenCandidate.id !== 'escalate') {
@@ -379,12 +544,12 @@ export class SettleAgent implements AgentPort {
     _snapshot: Snapshot,
   ): Promise<ChatAnswer> {
     return {
-      text: 'Chat is not yet implemented in Stage 2',
+      text: 'Chat is not yet implemented in Stage 2/3',
       toolCalls: [],
     };
   }
 }
 
-export function createAgent(options: CreateAgentOptions): AgentPort {
+export function createAgent(options: CreateAgentOptions): SettleAgent {
   return new SettleAgent(options);
 }

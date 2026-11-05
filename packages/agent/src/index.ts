@@ -1,5 +1,15 @@
-export { createAgent, SettleAgent, type CreateAgentOptions, type ExtendedLlmPort } from './agent.js';
-export { MockLlm, type MockLlmMode, type MockLlmOptions } from './llm/mockLlm.js';
+export {
+  createAgent,
+  SettleAgent,
+  type CreateAgentOptions,
+  type ExtendedLlmPort,
+  type AgentRunMetrics,
+} from './agent.js';
+export {
+  MockLlm,
+  type MockLlmMode,
+  type MockLlmOptions,
+} from './llm/mockLlm.js';
 export * from './clock.js';
 export * from './ids.js';
 export * from './format.js';
@@ -9,6 +19,8 @@ export * from './fallback.js';
 export * from './foldChange.js';
 export * from './prompts/selection.js';
 export * from './prompts/decision.js';
+export * from './grounding.js';
+export * from './draftNote.js';
 export * from '@settle/shared';
 
 import { createAgent } from './agent.js';

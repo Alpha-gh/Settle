@@ -30,9 +30,9 @@ Facts:
     });
 
     expect(res.selectedOptionId).toBe('opt_2');
-    expect(res.reason).toContain('opt_2');
-    expect(res.reason).toContain('300');
-    expect(res.reason).toContain('2000');
+    expect(res.reason).toContain('$3.00');
+    expect(res.reason).toContain('$20.00');
+    expect(res.reason).not.toContain('opt_2');
   });
 
   it('good mode: given none closing, it picks the largest lowestDelta', async () => {
@@ -54,8 +54,8 @@ Facts:
     });
 
     expect(res.selectedOptionId).toBe('opt_3');
-    expect(res.reason).toContain('opt_3');
-    expect(res.reason).toContain('2500');
+    expect(res.reason).toContain('$25.00');
+    expect(res.reason).not.toContain('opt_3');
   });
 
   it('failure mode: invalidJson throws simulated syntax error', async () => {

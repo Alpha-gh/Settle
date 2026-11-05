@@ -52,7 +52,8 @@ export function deterministicChoice(candidates: Candidate[]): Candidate {
 }
 
 /**
- * Generates a deterministic templated explanation quoting strictly formatted facts.
+ * Generates a deterministic templated explanation quoting strictly formatted facts
+ * in natural, owner-friendly language without internal IDs.
  * Fits within the 280 character limit.
  */
 export function templatedReason(candidate: Candidate, invoice: Invoice): string {
@@ -62,12 +63,31 @@ export function templatedReason(candidate: Candidate, invoice: Invoice): string 
   const deltaFormatted = formatUsd(candidate.lowestDelta);
 
   if (candidate.id === 'escalate') {
-    return `Escalating invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}): no auto-recovery path closed the gap.`;
+    return `Escalating invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) for manual collection because no automated recovery closes the gap.`;
   }
 
   if (candidate.closesGap) {
-    return `Selected ${candidate.id} (${candidate.change.type}) for ${invoice.number}: closes cashflow gap at lowest cash cost ${costFormatted} with delta ${deltaFormatted}.`;
+    if (candidate.change.type === 'REMIND') {
+      return `Sending reminder for invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) to recover cash and close the cashflow gap.`;
+    }
+    if (candidate.change.type === 'OFFER_DISCOUNT') {
+      return `Offering a ${candidate.change.discountPct}% discount on invoice ${invoice.number} to accelerate ${deltaFormatted} at a cost of ${costFormatted}, closing the cashflow gap.`;
+    }
+    if (candidate.change.type === 'OFFER_INSTALMENTS') {
+      return `Offering ${candidate.change.count} instalments spaced ${candidate.change.spacingDays} days on invoice ${invoice.number} to recover ${remainingFormatted} and close the gap.`;
+    }
+    return `Applying ${candidate.change.type} on invoice ${invoice.number} (${remainingFormatted}) to improve balance by ${deltaFormatted} at cost ${costFormatted}, closing the gap.`;
   }
 
-  return `Selected ${candidate.id} (${candidate.change.type}) for ${invoice.number}: yields largest delta ${deltaFormatted} with cash cost ${costFormatted}.`;
+  // Does not close gap
+  if (candidate.change.type === 'REMIND') {
+    return `Sending reminder for invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) to recover cash and improve balance by ${deltaFormatted}.`;
+  }
+  if (candidate.change.type === 'OFFER_DISCOUNT') {
+    return `Offering a ${candidate.change.discountPct}% discount on invoice ${invoice.number} to accelerate ${deltaFormatted} at a cost of ${costFormatted}.`;
+  }
+  if (candidate.change.type === 'OFFER_INSTALMENTS') {
+    return `Offering ${candidate.change.count} instalments spaced ${candidate.change.spacingDays} days on invoice ${invoice.number} to improve cash by ${deltaFormatted}.`;
+  }
+  return `Applying ${candidate.change.type} on invoice ${invoice.number} (${remainingFormatted}) to improve balance by ${deltaFormatted} at cost ${costFormatted}.`;
 }

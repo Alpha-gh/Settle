@@ -9,8 +9,8 @@ async function main() {
   const snapshot = buildSnapshot();
   const engine = new FakeEngine({
     closesGapMap: {
-      'inv_001': true,
-      'inv_002': true,
+      inv_001: true,
+      inv_002: true,
     },
   });
   const llm = new MockLlm({ mode: 'good' });
@@ -31,6 +31,9 @@ async function main() {
     const inv = invoiceMap.get(action.invoiceId);
     const invoiceNum = inv ? inv.number : action.invoiceId;
     console.log(`${invoiceNum} | ${action.type} | ${action.status} | ${action.reason}`);
+    if (action.params.note) {
+      console.log(`  -> Draft Note: ${action.params.note}`);
+    }
   }
 }
 
@@ -38,4 +41,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-
