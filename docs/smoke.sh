@@ -3,16 +3,24 @@
 # Settle API Smoke Test Script
 #
 # Tests all Contract v1 endpoints against a running Settle API server
-# and prints HTTP status codes and responses.
+# and verifies HTTP status codes.
 #
 # Usage:
 #   bash docs/smoke.sh [BASE_URL]
+# Example:
+#   bash docs/smoke.sh https://settle-api.onrender.com
 # Default BASE_URL: http://localhost:3000
 # ==============================================================================
 
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:3000}"
+# Strip any trailing slash from BASE_URL
+BASE_URL="${BASE_URL%/}"
+
+TEMP_FILE="${TMPDIR:-/tmp}/settle_smoke_res.json"
+FAILURES=0
+
 echo "=================================================="
 echo "Settle API Smoke Test: target ${BASE_URL}"
 echo "=================================================="
@@ -21,55 +29,60 @@ call_endpoint() {
   local method="$1"
   local path="$2"
   local payload="${3:-}"
+  local expected_codes="${4:-200 201 204}"
   local url="${BASE_URL}${path}"
 
   echo -n "[$method] $path -> "
 
+  local http_code
   if [ -n "$payload" ]; then
-    http_code=$(curl -s -o /tmp/smoke_res.json -w "%{http_code}" -X "$method" \
+    http_code=$(curl -s -o "$TEMP_FILE" -w "%{http_code}" -X "$method" \
       -H "Content-Type: application/json" \
       -d "$payload" "$url" 2>/dev/null || echo "000")
   else
-    http_code=$(curl -s -o /tmp/smoke_res.json -w "%{http_code}" -X "$method" \
+    http_code=$(curl -s -o "$TEMP_FILE" -w "%{http_code}" -X "$method" \
       "$url" 2>/dev/null || echo "000")
   fi
 
   echo "HTTP $http_code"
-  if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
-    # Print sample / summary of response (first 120 chars)
-    head -c 120 /tmp/smoke_res.json 2>/dev/null || true
+  if [[ " $expected_codes " =~ " $http_code " ]] || ([ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]); then
+    head -c 120 "$TEMP_FILE" 2>/dev/null || true
     echo ""
   else
-    echo "  Response body:"
-    cat /tmp/smoke_res.json 2>/dev/null || true
+    echo "  [ERROR] Response body:"
+    cat "$TEMP_FILE" 2>/dev/null || true
     echo ""
+    FAILURES=$((FAILURES + 1))
   fi
 }
 
-# 1. Health check
+# 1. Landing Page at /
+call_endpoint "GET" "/"
+
+# 2. Health check
 call_endpoint "GET" "/health"
 
-# 2. Reset to baseline seed scenario
-call_endpoint "POST" "/api/demo/reset"
+# 3. Reset to baseline seed scenario
+call_endpoint "POST" "/api/demo/reset" "{}"
 
-# 3. Dashboard
+# 4. Dashboard
 call_endpoint "GET" "/api/dashboard"
 
-# 4. Invoices
+# 5. Invoices
 call_endpoint "GET" "/api/invoices"
 
-# 5. Provision PayPal demo invoices
-call_endpoint "POST" "/api/demo/provision-paypal"
+# 6. Provision PayPal demo invoices
+call_endpoint "POST" "/api/demo/provision-paypal" "{}"
 
-# 6. Agent run (cycle)
-call_endpoint "POST" "/api/agent/run"
+# 7. Agent run (cycle)
+call_endpoint "POST" "/api/agent/run" "{}"
 
-# 7. Actions list
+# 8. Actions list
 call_endpoint "GET" "/api/actions"
 
-# 8. Action approve & reject (dynamically select from action list if available)
-FIRST_ACTION_ID=$(curl -s "${BASE_URL}/api/actions" | grep -o '"id":"[^"]*' | head -n 1 | cut -d'"' -f4 || echo "act_001")
-SECOND_ACTION_ID=$(curl -s "${BASE_URL}/api/actions" | grep -o '"id":"[^"]*' | head -n 2 | tail -n 1 | cut -d'"' -f4 || echo "act_002")
+# 9. Action approve & reject
+FIRST_ACTION_ID=$(curl -s "${BASE_URL}/api/actions" | grep -o '"id":"[^"]*' | head -n 1 | cut -d'"' -f4 || echo "")
+SECOND_ACTION_ID=$(curl -s "${BASE_URL}/api/actions" | grep -o '"id":"[^"]*' | head -n 2 | tail -n 1 | cut -d'"' -f4 || echo "")
 
 if [ -n "$FIRST_ACTION_ID" ]; then
   call_endpoint "POST" "/api/actions/${FIRST_ACTION_ID}/approve" '{"note":"Approved via smoke test"}'
@@ -78,7 +91,7 @@ if [ -n "$SECOND_ACTION_ID" ]; then
   call_endpoint "POST" "/api/actions/${SECOND_ACTION_ID}/reject" '{"note":"Rejected via smoke test"}'
 fi
 
-# 9. Simulate scenario (Contract v1 shape: { change: ScenarioChange })
+# 10. Simulate scenario
 SIMULATE_PAYLOAD='{
   "change": {
     "type": "REMIND",
@@ -88,17 +101,17 @@ SIMULATE_PAYLOAD='{
 }'
 call_endpoint "POST" "/api/simulate" "$SIMULATE_PAYLOAD"
 
-# 10. Chat (Contract v1 shape: { question: string })
+# 11. Chat
 CHAT_PAYLOAD='{
   "question": "What is our cash forecast for the next 14 days?"
 }'
 call_endpoint "POST" "/api/chat" "$CHAT_PAYLOAD"
 
-# 11. Audit trail
+# 12. Audit trail
 call_endpoint "GET" "/api/audit"
 
-# 12. Policy get & update & restore
-echo "Reading current policy..."
+# 13. Policy get, update, and restore original defaults
+echo "Capturing current policy..."
 ORIG_POLICY=$(curl -s "${BASE_URL}/api/policy" || echo "{}")
 call_endpoint "GET" "/api/policy"
 
@@ -118,10 +131,10 @@ call_endpoint "PUT" "/api/policy" "$POLICY_PAYLOAD"
 echo "Restoring original policy defaults..."
 call_endpoint "PUT" "/api/policy" "$ORIG_POLICY"
 
-# 13. Simulate demo payment against provisioned invoice
-call_endpoint "POST" "/api/demo/simulate-payment" '{"invoiceId":"inv_001","amount":50000}'
+# 14. Simulate demo payment against provisioned invoice
+call_endpoint "POST" "/api/demo/simulate-payment" '{"invoiceId":"inv_001","amountCents":50000}'
 
-# 14. PayPal Webhook
+# 15. PayPal Webhook (accepts 200 or 400 INVALID_SIGNATURE for unsigned test payload)
 WEBHOOK_PAYLOAD='{
   "id": "WH-SMOKE-TEST-001",
   "event_type": "INVOICING.INVOICE.PAID",
@@ -131,11 +144,20 @@ WEBHOOK_PAYLOAD='{
     }
   }
 }'
-call_endpoint "POST" "/api/webhooks/paypal" "$WEBHOOK_PAYLOAD"
+call_endpoint "POST" "/api/webhooks/paypal" "$WEBHOOK_PAYLOAD" "200 400"
 
-# 15. Demo Reset again
-call_endpoint "POST" "/api/demo/reset"
+# 16. Final reset to leave clean state
+call_endpoint "POST" "/api/demo/reset" "{}"
+
+# Clean up temp file
+rm -f "$TEMP_FILE" 2>/dev/null || true
 
 echo "=================================================="
-echo "Smoke test completed successfully!"
+if [ "$FAILURES" -gt 0 ]; then
+  echo "Smoke test FAILED with $FAILURES endpoint errors!"
+  exit 1
+fi
+
+echo "Smoke test completed successfully (0 errors)!"
 echo "=================================================="
+exit 0
