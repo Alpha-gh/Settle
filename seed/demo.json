@@ -265,17 +265,18 @@
     }
   ],
   "policy": {
-    "maxDiscountPct": 10,
-    "maxInstalments": 4,
-    "autoApproveMaxAmount": 200000,
+    "maxDiscountPct": 5,
+    "maxInstalments": 3,
+    "autoApproveMaxAmount": 50000,
     "requireApprovalFor": [
       "OFFER_DISCOUNT",
+      "OFFER_INSTALMENTS",
       "ESCALATE"
     ],
     "quietHours": {
-      "startHour": 22,
-      "endHour": 7
+      "startHour": 20,
+      "endHour": 8
     },
-    "maxRemindersPerInvoicePerWeek": 3
+    "maxRemindersPerInvoicePerWeek": 2
   }
 }

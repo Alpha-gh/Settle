@@ -338,10 +338,11 @@ export const DashboardResponseSchema = z.object({
   business: BusinessSchema,
   kpis: KpisSchema,
   forecast: ForecastResultSchema,
-  overdueInvoices: z.array(InvoiceSchema),
+  invoices: z.array(InvoiceSchema),
+  payers: z.array(PayerSchema),
   obligations: z.array(ObligationSchema),
-  recentActions: z.array(ActionRecordSchema),
-  auditLog: z.array(AuditEventSchema),
+  recentActions: z.array(ActionRecordSchema).optional(),
+  auditLog: z.array(AuditEventSchema).optional(),
 });
 export type DashboardResponse = z.infer<typeof DashboardResponseSchema>;
 
@@ -356,6 +357,17 @@ export const ChatRequestBodySchema = z.object({
 
 export const ActionDecisionBodySchema = z.object({
   note: z.string().optional(),
+});
+
+export const AgentRunRequestBodySchema = z
+  .object({
+    invoiceId: IdSchema.optional(),
+  })
+  .optional();
+
+export const SimulatePaymentBodySchema = z.object({
+  invoiceId: IdSchema,
+  amount: CentsSchema.optional(),
 });
 
 export const UpdatePolicyBodySchema = PolicySchema;

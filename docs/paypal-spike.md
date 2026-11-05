@@ -60,3 +60,10 @@ PayPal Invoicing v2 statuses map cleanly to Settle's `InvoiceStatus`:
 - Webhook notifications are delivered asynchronously by PayPal's background event workers (typically 15–90 seconds after transaction).
 - For local development and automated spikes, querying `/v1/notifications/webhooks-events` or polling `/v2/invoicing/invoices/{id}` provides deterministic state verification.
 
+### 6. Past Invoice & Due Dates
+- **Empirical Test Result**:
+  Tested creating and sending draft invoices where `invoice_date` and `due_date` are both in the past (e.g. `invoice_date: 2026-10-15` and `due_date: 2026-10-25`).
+- **Observed Behavior**:
+  PayPal Invoicing v2 accepted past dates without error (returned HTTP 201 Created on draft and HTTP 200 OK on send). The invoice immediately becomes `SENT` and overdue on PayPal.
+  Therefore, Settle seed scenario invoices can be provisioned with their authentic past issue and due dates preserved, exactly matching our local database.
+
