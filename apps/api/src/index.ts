@@ -1,6 +1,7 @@
 import { buildApp } from './app.js';
 import { validateEnv } from './config/env.js';
 import { runMigrations } from './db/migrate.js';
+import { getRawSql } from './db/index.js';
 import { BusinessRepository } from './db/repositories.js';
 import { resetDemoData } from './db/seed.js';
 
@@ -11,13 +12,18 @@ const start = async () => {
   // Ensure DB schema migrations run automatically and seed when database is empty
   try {
     await runMigrations();
-    const bizRepo = new BusinessRepository();
-    const existing = await bizRepo.get();
-    if (!existing) {
-      console.log('Database is empty; seeding initial demo scenario from seed/demo.json...');
-      await resetDemoData();
-      console.log('Initial seed completed successfully.');
-    }
+    const sql = getRawSql();
+    // Advisory lock guarantees concurrency safety if multiple instances spin up concurrently
+    await sql.begin(async (tx) => {
+      await tx.unsafe(`SELECT pg_advisory_xact_lock(847291);`);
+      const bizRepo = new BusinessRepository();
+      const existing = await bizRepo.get();
+      if (!existing) {
+        console.log('Database is empty; seeding initial demo scenario from seed/demo.json...');
+        await resetDemoData();
+        console.log('Initial seed completed successfully.');
+      }
+    });
   } catch (dbErr) {
     console.error('Fatal database initialization error:', dbErr);
     throw dbErr;
