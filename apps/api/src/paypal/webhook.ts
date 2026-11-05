@@ -13,6 +13,7 @@ import {
 import { getEngine } from '../adapters/engine.js';
 import { eventBus } from '../events/bus.js';
 import { PayPalClient } from './client.js';
+import { PaymentReconciliationService } from '../services/reconciliation.js';
 
 export interface PayPalWebhookHeaders {
   'paypal-auth-algo'?: string;
@@ -30,11 +31,16 @@ export class PayPalWebhookHandler {
   private readonly businessRepo = new BusinessRepository();
   private readonly payerRepo = new PayerRepository();
   private readonly obligationRepo = new ObligationRepository();
+  private readonly reconcileService: PaymentReconciliationService;
 
   constructor(
     private readonly paypalClient: PayPalClient,
     private readonly logger: FastifyBaseLogger,
-  ) {}
+    reconcileService?: PaymentReconciliationService,
+  ) {
+    this.reconcileService =
+      reconcileService ?? new PaymentReconciliationService(paypalClient);
+  }
 
   /**
    * Verifies incoming webhook signature with PayPal API.
@@ -207,48 +213,14 @@ export class PayPalWebhookHandler {
     eventId?: string,
   ): Promise<void> {
     try {
-      const { status: liveStatus, amountPaid: liveAmountPaid } =
-        await this.paypalClient.getInvoice(paypalInvoiceId);
-
-      const updatedInvoice = await this.invoiceRepo.update(invoiceId, {
-        status: liveStatus,
-        amountPaid: liveAmountPaid,
-      });
-
-      // Append audit event
-      const auditEvt: AuditEvent = {
-        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        ts: new Date().toISOString(),
+      await this.reconcileService.reconcileInvoicePayment({
+        invoiceId,
+        paypalInvoiceId,
         actor: 'paypal',
-        kind: eventType,
-        summary: `PayPal webhook ${eventType}: updated invoice ${updatedInvoice.number} status to ${liveStatus}, paid ${liveAmountPaid} cents.`,
-        invoiceId: updatedInvoice.id,
+        eventType,
+        eventId,
         paypalRequestId: eventId,
-        detail: { eventId, paypalInvoiceId, liveStatus, liveAmountPaid },
-      };
-      await this.auditRepo.append(auditEvt);
-
-      // Recompute forecast with EnginePort
-      const business = await this.businessRepo.get();
-      const payers = await this.payerRepo.list();
-      const allInvoices = await this.invoiceRepo.list();
-      const obligations = await this.obligationRepo.list();
-
-      if (business) {
-        const engine = await getEngine();
-        const receipts = engine.expectedReceipts(allInvoices, payers, business.asOf);
-        const forecast = engine.forecast({
-          business,
-          obligations,
-          receipts,
-          horizonDays: 30,
-        });
-
-        // Emit SSE events
-        eventBus.emitEvent({ type: 'invoice.updated', payload: updatedInvoice });
-        eventBus.emitEvent({ type: 'audit.appended', payload: auditEvt });
-        eventBus.emitEvent({ type: 'forecast.updated', payload: forecast });
-      }
+      });
     } catch (err) {
       this.logger.error(
         { err, invoiceId, paypalInvoiceId },

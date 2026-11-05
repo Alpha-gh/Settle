@@ -82,7 +82,16 @@ class FakePayPal implements PayPalPort {
     this.auditTrail.push({ paypalRequestId: reqId, httpStatus: 200, operation: 'cancelInvoice' });
   }
 
+  public customStates: Map<string, { status: InvoiceStatus; amountPaid: Cents }> = new Map();
+
+  public setInvoiceState(paypalInvoiceId: string, status: InvoiceStatus, amountPaid: Cents) {
+    this.customStates.set(paypalInvoiceId, { status, amountPaid });
+  }
+
   async getInvoice(paypalInvoiceId: string): Promise<{ status: InvoiceStatus; amountPaid: Cents }> {
+    if (this.customStates.has(paypalInvoiceId)) {
+      return this.customStates.get(paypalInvoiceId)!;
+    }
     const payments = this.recordedPayments.filter((p) => p.paypalInvoiceId === paypalInvoiceId);
     const totalPaid = payments.reduce((acc, p) => acc + p.amount, 0);
     return {
@@ -689,4 +698,144 @@ describe('Stage 4 - Core System 1 Integration & FakePayPal Tests', () => {
     const activeInvFinal = (await invoiceRepo.getById(oldInvoiceId))!;
     expect(activeInvFinal.status).toBe('SENT');
   });
+
+  it('14. Cash balance synchronization: payment, duplicate, partial, refund, and reset', async () => {
+    process.env.WEBHOOK_VERIFY = 'false';
+    resetCachedEnv();
+
+    // 1. Reset demo data to baseline
+    const resetRes = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetRes.statusCode).toBe(200);
+
+    const initialDashRes = await app.inject({ method: 'GET', url: '/api/dashboard' });
+    const initialDash = JSON.parse(initialDashRes.payload);
+    expect(initialDash.business.startingBalance).toBe(980000);
+    expect(initialDash.kpis.cash).toBe(980000);
+    expect(initialDash.kpis.shortfall).toBe(200000);
+
+    // 2. Provision invoices in PayPal
+    const provRes = await app.inject({ method: 'POST', url: '/api/demo/provision-paypal' });
+    expect(provRes.statusCode).toBe(200);
+
+    const inv1 = (await invoiceRepo.getById('inv_001'))!;
+    expect(inv1.amount).toBe(350000);
+    expect(inv1.amountPaid).toBe(0);
+    expect(inv1.paypalInvoiceId).toBeDefined();
+
+    // 3. Paying inv_001 in full sets cash to 1,330,000, shortfall 0 and firstBreachDate null
+    const payRes = await app.inject({
+      method: 'POST',
+      url: '/api/demo/simulate-payment',
+      payload: { invoiceId: 'inv_001' },
+    });
+    expect(payRes.statusCode).toBe(200);
+    const payJson = JSON.parse(payRes.payload);
+    expect(payJson.status).toBe('ok');
+    expect(payJson.invoice.status).toBe('PAID');
+    expect(payJson.invoice.amountPaid).toBe(350000);
+    expect(payJson.forecast.shortfall).toBe(0);
+    expect(payJson.forecast.firstBreachDate).toBeNull();
+
+    // Verify stored business startingBalance and dashboard
+    const dashAfterPayRes = await app.inject({ method: 'GET', url: '/api/dashboard' });
+    const dashAfterPay = JSON.parse(dashAfterPayRes.payload);
+    expect(dashAfterPay.business.startingBalance).toBe(1330000);
+    expect(dashAfterPay.kpis.cash).toBe(1330000);
+    expect(dashAfterPay.kpis.shortfall).toBe(0);
+    expect(dashAfterPay.forecast.shortfall).toBe(0);
+    expect(dashAfterPay.forecast.firstBreachDate).toBeNull();
+
+    // Verify audit event stating amount received and new cash balance
+    const audits = await auditRepo.list(20);
+    const payAudit = audits.find(
+      (a) => a.invoiceId === 'inv_001' && (a.kind === 'invoice.paid' || a.kind === 'INVOICING.INVOICE.PAID'),
+    );
+    expect(payAudit).toBeDefined();
+    expect(payAudit?.summary).toMatch(/3,?500\.00/);
+    expect(payAudit?.summary).toMatch(/13,?300\.00/);
+    expect(payAudit?.detail?.newCashBalance).toBe(1330000);
+
+    // 4. Duplicate webhook or second reconcile adds nothing
+    const dupWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-DUP-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.PAID',
+        resource: {
+          invoice: { id: inv1.paypalInvoiceId },
+        },
+      },
+    });
+    expect(dupWebhookRes.statusCode).toBe(200);
+
+    const dashAfterDup = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashAfterDup.business.startingBalance).toBe(1330000);
+    expect(dashAfterDup.kpis.cash).toBe(1330000);
+
+    // 5. Partial payment adds only the delta
+    const inv2 = (await invoiceRepo.getById('inv_002'))!;
+    expect(inv2.paypalInvoiceId).toBeDefined();
+    expect(inv2.amountPaid).toBe(0);
+
+    // First partial payment of 50,000 cents
+    const partPayRes1 = await app.inject({
+      method: 'POST',
+      url: '/api/demo/simulate-payment',
+      payload: { invoiceId: 'inv_002', amount: 50000 },
+    });
+    expect(partPayRes1.statusCode).toBe(200);
+
+    const dashAfterPart1 = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashAfterPart1.business.startingBalance).toBe(1380000);
+    expect(dashAfterPart1.kpis.cash).toBe(1380000);
+
+    // Second partial payment of 30,000 cents (cumulative 80,000 cents, delta = +30,000)
+    const partPayRes2 = await app.inject({
+      method: 'POST',
+      url: '/api/demo/simulate-payment',
+      payload: { invoiceId: 'inv_002', amount: 30000 },
+    });
+    expect(partPayRes2.statusCode).toBe(200);
+
+    const dashAfterPart2 = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashAfterPart2.business.startingBalance).toBe(1410000);
+    expect(dashAfterPart2.kpis.cash).toBe(1410000);
+
+    // 6. A refund subtracts
+    // Simulate PayPal refunding inv_002 back to 0
+    fakePayPal.setInvoiceState(inv2.paypalInvoiceId!, 'REFUNDED', 0);
+    const refundWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-REFUND-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.REFUNDED',
+        resource: {
+          invoice: { id: inv2.paypalInvoiceId },
+        },
+      },
+    });
+    expect(refundWebhookRes.statusCode).toBe(200);
+
+    const dashAfterRefund = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    // 1,410,000 - 80,000 = 1,330,000
+    expect(dashAfterRefund.business.startingBalance).toBe(1330000);
+    expect(dashAfterRefund.kpis.cash).toBe(1330000);
+
+    const refundAudit = (await auditRepo.list(20)).find((a) => a.kind === 'INVOICING.INVOICE.REFUNDED');
+    expect(refundAudit).toBeDefined();
+    expect(refundAudit?.detail?.refundAmount).toBe(80000);
+    expect(refundAudit?.detail?.newCashBalance).toBe(1330000);
+
+    // 7. Reset restores 980,000
+    const resetResFinal = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetResFinal.statusCode).toBe(200);
+
+    const dashFinal = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashFinal.business.startingBalance).toBe(980000);
+    expect(dashFinal.kpis.cash).toBe(980000);
+    expect(dashFinal.kpis.shortfall).toBe(200000);
+  });
+
 });
