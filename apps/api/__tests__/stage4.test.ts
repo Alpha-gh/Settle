@@ -11,6 +11,11 @@ import type {
   ActionRecord,
 } from '@settle/shared';
 import { buildApp } from '../src/app.js';
+import { PayPalClient } from '../src/paypal/client.js';
+import { resetCachedEnv } from '../src/config/env.js';
+import { getDb } from '../src/db/index.js';
+import { invoicePayPalIds } from '../src/db/schema.js';
+import { isNotNull } from 'drizzle-orm';
 import { setupTestDatabase } from '../src/db/test-db.js';
 import { closeDb } from '../src/db/index.js';
 import {
@@ -44,9 +49,12 @@ class FakePayPal implements PayPalPort {
     this.createdInvoices.push({ inv, payer });
     this.auditTrail.push({ paypalRequestId: reqId, httpStatus: 201, operation: 'createAndSendInvoice' });
 
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+    const paypalInvoiceNumber = `${inv.number || 'INV'}-${suffix}`;
     return {
       paypalInvoiceId,
       payUrl: `https://www.sandbox.paypal.com/invoice/p/#${paypalInvoiceId}`,
+      paypalInvoiceNumber,
     };
   }
 
@@ -474,5 +482,211 @@ describe('Stage 4 - Core System 1 Integration & FakePayPal Tests', () => {
     const simJson = JSON.parse(simRes.payload);
     expect(simJson.scenario).toBeDefined();
     expect(simJson.baseline).toBeDefined();
+  });
+
+  it('11. PayPalClient: duplicate number on first try then success on retry', async () => {
+    let draftAttempts = 0;
+    const recordedInvoiceNumbers: string[] = [];
+
+    const mockFetch: typeof fetch = async (url, init) => {
+      const urlStr = String(url);
+      if (urlStr.endsWith('/v1/oauth2/token')) {
+        return new Response(JSON.stringify({ access_token: 'mock_token', expires_in: 3600 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (urlStr.endsWith('/v2/invoicing/invoices')) {
+        draftAttempts++;
+        const body = JSON.parse(String(init?.body));
+        recordedInvoiceNumbers.push(body.detail.invoice_number);
+
+        if (draftAttempts === 1) {
+          return new Response(
+            JSON.stringify({
+              name: 'UNPROCESSABLE_ENTITY',
+              message: 'The requested action could not be performed, semantically incorrect, or failed business validation.',
+              debug_id: 'dbg_dup_123',
+              details: [
+                {
+                  field: '/detail/invoice_number',
+                  value: body.detail.invoice_number,
+                  location: 'body',
+                  issue: 'DUPLICATE_INVOICE_NUMBER',
+                  description: 'Invoice number already exists',
+                },
+              ],
+            }),
+            {
+              status: 422,
+              headers: { 'Content-Type': 'application/json', 'paypal-debug-id': 'dbg_dup_123' },
+            },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: 'INV2-RETRY-SUCCESS-ID',
+            detail: { invoice_number: body.detail.invoice_number },
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (urlStr.includes('/send')) {
+        return new Response(
+          JSON.stringify({ href: 'https://www.sandbox.paypal.com/invoice/p/#INV2-RETRY-SUCCESS-ID' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    };
+
+    const client = new PayPalClient({
+      clientId: 'mock-client',
+      clientSecret: 'mock-secret',
+      fetchFn: mockFetch,
+      useNumberSuffix: true,
+    });
+
+    const inv: Invoice = {
+      id: 'inv_test_retry',
+      payerId: 'pyr_001',
+      number: 'INV-1001',
+      description: 'Test retry',
+      amount: 10000,
+      amountPaid: 0,
+      issueDate: '2026-10-01',
+      dueDate: '2026-10-15',
+      status: 'SENT',
+      discountPct: 0,
+      allowPartial: false,
+    };
+    const payer: Payer = {
+      id: 'pyr_001',
+      name: 'Acme Corp',
+      email: 'billing@acme.com',
+      paymentTermsDays: 30,
+      typicalDelayDays: 5,
+    };
+
+    const res = await client.createAndSendInvoice(inv, payer);
+    expect(draftAttempts).toBe(2);
+    expect(recordedInvoiceNumbers.length).toBe(2);
+    expect(recordedInvoiceNumbers[0]).not.toBe(recordedInvoiceNumbers[1]);
+    expect(recordedInvoiceNumbers[0]).toMatch(/^INV-1001-[0-9A-Z]{4}$/);
+    expect(recordedInvoiceNumbers[1]).toMatch(/^INV-1001-[0-9A-Z]{4}$/);
+    expect(res.paypalInvoiceId).toBe('INV2-RETRY-SUCCESS-ID');
+    expect(res.paypalInvoiceNumber).toBe(recordedInvoiceNumbers[1]);
+  });
+
+  it('12. Two consecutive reset-and-provision runs both create 12 invoices, preserving history', async () => {
+    // First reset & provision
+    const resetRes1 = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetRes1.statusCode).toBe(200);
+
+    const provRes1 = await app.inject({ method: 'POST', url: '/api/demo/provision-paypal' });
+    expect(provRes1.statusCode).toBe(200);
+    const provJson1 = JSON.parse(provRes1.payload);
+    expect(provJson1.provisioned).toBe(12);
+    expect(provJson1.failed).toBe(0);
+
+    const db = getDb();
+    const rows1 = await db.select().from(invoicePayPalIds);
+    const activeRows1 = rows1.filter((r) => r.replacedAt === null);
+    expect(activeRows1.length).toBe(12);
+
+    // Second reset & provision
+    const resetRes2 = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetRes2.statusCode).toBe(200);
+
+    // After reset, all previous rows are marked replaced with reason "demo reset", none are deleted
+    const rowsAfterReset = await db.select().from(invoicePayPalIds);
+    expect(rowsAfterReset.length).toBeGreaterThanOrEqual(12);
+    expect(rowsAfterReset.every((r) => r.replacedAt !== null)).toBe(true);
+
+    const provRes2 = await app.inject({ method: 'POST', url: '/api/demo/provision-paypal' });
+    expect(provRes2.statusCode).toBe(200);
+    const provJson2 = JSON.parse(provRes2.payload);
+    expect(provJson2.provisioned).toBe(12);
+    expect(provJson2.failed).toBe(0);
+
+    // Now 12 new active rows exist alongside the historical replaced rows
+    const rows2 = await db.select().from(invoicePayPalIds);
+    const activeRows2 = rows2.filter((r) => r.replacedAt === null);
+    const replacedRows2 = rows2.filter((r) => r.replacedAt !== null);
+    expect(activeRows2.length).toBe(12);
+    expect(replacedRows2.length).toBe(rowsAfterReset.length);
+  });
+
+  it('13. Old webhooks after reset are ignored as superseded and never alter new data', async () => {
+    process.env.WEBHOOK_VERIFY = 'false';
+    resetCachedEnv();
+
+    // Get an old replaced PayPal ID from the first run
+    const db = getDb();
+    const replaced = await db.select().from(invoicePayPalIds).where(isNotNull(invoicePayPalIds.replacedAt)).limit(1);
+    expect(replaced.length).toBe(1);
+    const oldPayPalInvoiceId = replaced[0].paypalInvoiceId;
+    const oldInvoiceId = replaced[0].invoiceId;
+
+    // Check current state of this invoice in the active DB
+    const activeInvBefore = (await invoiceRepo.getById(oldInvoiceId))!;
+    expect(activeInvBefore).toBeDefined();
+    expect(activeInvBefore.status).toBe('SENT');
+
+    // Send a CANCELLED webhook event for the old PayPal invoice ID
+    const cancelWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-OLD-CANCEL-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.CANCELLED',
+        resource: {
+          invoice: { id: oldPayPalInvoiceId },
+        },
+      },
+    });
+    expect(cancelWebhookRes.statusCode).toBe(200);
+    const cancelJson = JSON.parse(cancelWebhookRes.payload);
+    expect(cancelJson.handled).toBe(true);
+
+    // Verify active invoice was NOT marked CANCELLED
+    const activeInvAfterCancel = (await invoiceRepo.getById(oldInvoiceId))!;
+    expect(activeInvAfterCancel.status).toBe('SENT');
+
+    // Verify superseded audit event was recorded
+    const audits = await auditRepo.list(20);
+    const cancelAudit = audits.find(
+      (a) => a.kind === 'invoice.superseded_cancelled' && a.detail?.paypalInvoiceId === oldPayPalInvoiceId,
+    );
+    expect(cancelAudit).toBeDefined();
+
+    // Also send an UPDATED webhook event for the old PayPal invoice ID
+    const updateWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-OLD-UPDATE-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.UPDATED',
+        resource: {
+          invoice: { id: oldPayPalInvoiceId },
+        },
+      },
+    });
+    expect(updateWebhookRes.statusCode).toBe(200);
+    const updateJson = JSON.parse(updateWebhookRes.payload);
+    expect(updateJson.handled).toBe(true);
+
+    const updateAudit = (await auditRepo.list(20)).find(
+      (a) => a.kind === 'invoice.superseded_updated' && a.detail?.paypalInvoiceId === oldPayPalInvoiceId,
+    );
+    expect(updateAudit).toBeDefined();
+
+    // Active invoice still unchanged
+    const activeInvFinal = (await invoiceRepo.getById(oldInvoiceId))!;
+    expect(activeInvFinal.status).toBe('SENT');
   });
 });

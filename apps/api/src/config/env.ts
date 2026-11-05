@@ -90,6 +90,10 @@ export const EnvSchema = z
       .union([z.boolean(), z.string()])
       .transform((val) => (typeof val === 'boolean' ? val : val === 'true'))
       .default(false),
+    PAYPAL_NUMBER_SUFFIX: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => (typeof val === 'boolean' ? val : val !== 'false'))
+      .default(true),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== 'test') {

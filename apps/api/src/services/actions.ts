@@ -281,6 +281,7 @@ export class ActionService {
           childInv: Invoice;
           paypalInvoiceId: string;
           payUrl: string;
+          paypalInvoiceNumber?: string;
           requestId?: string;
         }> = [];
 
@@ -324,6 +325,7 @@ export class ActionService {
               },
               paypalInvoiceId: res.paypalInvoiceId,
               payUrl: res.payUrl,
+              paypalInvoiceNumber: (res as any).paypalInvoiceNumber,
               requestId: lastAudit?.paypalRequestId || randomUUID(),
             });
           }
@@ -370,7 +372,7 @@ export class ActionService {
         // 1. Persist child invoices and audit events
         for (const created of createdChildren) {
           await this.invoiceRepo.insert(created.childInv);
-          await this.historyRepo.record(created.childInv.id, created.paypalInvoiceId, 'instalment_child');
+          await this.historyRepo.record(created.childInv.id, created.paypalInvoiceId, 'instalment_child', (created as any).paypalInvoiceNumber);
 
           const childAudit: AuditEvent = {
             id: randomUUID(),

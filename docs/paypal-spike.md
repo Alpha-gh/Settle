@@ -67,3 +67,16 @@ PayPal Invoicing v2 statuses map cleanly to Settle's `InvoiceStatus`:
   PayPal Invoicing v2 accepted past dates without error (returned HTTP 201 Created on draft and HTTP 200 OK on send). The invoice immediately becomes `SENT` and overdue on PayPal.
   Therefore, Settle seed scenario invoices can be provisioned with their authentic past issue and due dates preserved, exactly matching our local database.
 
+### 7. Invoice Number Uniqueness & Suffix Trade-Off (`PAYPAL_NUMBER_SUFFIX`)
+- **Empirical Root Cause**:
+  PayPal Invoicing v2 enforces strict global uniqueness on `detail.invoice_number` across the entire merchant account. When demo data is reset locally via `POST /api/demo/reset`, previous invoice numbers (`INV-1001` through `INV-1014`) remain registered permanently in the PayPal sandbox merchant account. Subsequent creation attempts fail with HTTP 422 `UNPROCESSABLE_ENTITY` and detail issue `DUPLICATE_INVOICE_NUMBER`.
+- **Suffix Architecture**:
+  To allow seamless and repeatable resets against the same sandbox account, Settle appends a 4-character base36 uppercase suffix to each invoice created in PayPal (e.g. `INV-1001-K7Q2`, or `INV-1042-1/3-K7Q2` for instalment children). Settle's internal database maintains the canonical clean invoice number (`INV-1001`), while `invoice_paypal_ids` tracks the mapping to `paypal_invoice_number`.
+- **Collision Prevention & Retry**:
+  1. Before sending to PayPal, candidate numbers are checked locally against `invoice_paypal_ids`.
+  2. If PayPal still returns `DUPLICATE_INVOICE_NUMBER`, the client automatically generates a new suffix and retries up to 3 times.
+- **`PAYPAL_NUMBER_SUFFIX` Configuration & Trade-Off**:
+  - `PAYPAL_NUMBER_SUFFIX=true` (default): Appends the 4-char suffix. Recommended for iterative development, demo restarts, automated tests, and shared sandbox accounts to guarantee successful provisioning.
+  - `PAYPAL_NUMBER_SUFFIX=false`: Disables the suffix, sending clean `INV-1001` numbers to PayPal. Use this only for a single clean final recording or customer-facing demo against a fresh, unused PayPal sandbox merchant account.
+
+

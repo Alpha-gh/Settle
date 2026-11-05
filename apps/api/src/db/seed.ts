@@ -17,11 +17,19 @@ export async function resetDemoData(): Promise<void> {
   await runMigrations();
   const sql = getRawSql();
 
-  // Truncate tables cleanly (respecting foreign keys)
+  const nowIso = new Date().toISOString();
+  // Task 3: Mark existing invoice_paypal_ids history as replaced ("demo reset") instead of deleting
+  await sql.unsafe(`
+    UPDATE invoice_paypal_ids
+    SET replaced_at = COALESCE(replaced_at, '${nowIso}'),
+        reason = COALESCE(reason, 'demo reset')
+    WHERE replaced_at IS NULL;
+  `);
+
+  // Truncate tables cleanly (respecting foreign keys, preserving invoice_paypal_ids)
   await sql.unsafe(`
     TRUNCATE TABLE 
       action_records,
-      invoice_paypal_ids,
       invoices,
       obligations,
       payers,
