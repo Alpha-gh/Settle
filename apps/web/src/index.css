@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-ink: #0F172A;
+  --color-muted: #475569;
+  --color-border: #E2E8F0;
+  --color-canvas: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-accent: #1D4ED8;
+  --color-green: #166534;
+  --color-green-bg: #F0FDF4;
+  --color-amber: #92400E;
+  --color-amber-bg: #FFFBEB;
+  --color-red: #B91C1C;
+  --color-red-bg: #FEF2F2;
+}
+
+body {
+  margin: 0;
+  color: var(--color-ink);
+  background-color: var(--color-canvas);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
