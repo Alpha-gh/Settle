@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useDemoReset, useDemoSimulatePayment, useRunAgent, useSnapshot } from '../api/queries';
+import { useActions, useDemoReset, useDemoSimulatePayment, useRunAgent, useSnapshot } from '../api/queries';
 import { useSelectedAction } from '../state/selection';
 import { TEST_IDS } from '../testids';
 
@@ -10,6 +10,7 @@ export const DemoControls: React.FC = () => {
   const [confirmReset, setConfirmReset] = useState(false);
 
   const { data: snapshot } = useSnapshot();
+  const { data: actions } = useActions();
   const { selectedActionId, selectedInvoiceId } = useSelectedAction();
 
   const resetMutation = useDemoReset();
@@ -49,8 +50,8 @@ export const DemoControls: React.FC = () => {
     targetInvoiceId = selectedInvoiceId;
   } else if (selectedActionId) {
     // Look up action's invoice
-    const action = snapshot?.invoices.find((i) => i.id === selectedActionId); // fallback
-    targetInvoiceId = action ? action.id : null;
+    const action = actions?.find((a) => a.id === selectedActionId);
+    targetInvoiceId = action ? action.invoiceId : null;
   }
 
   const targetInvoice = snapshot?.invoices.find((i) => i.id === (targetInvoiceId || selectedInvoiceId));

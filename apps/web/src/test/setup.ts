@@ -60,7 +60,6 @@ if (typeof globalThis.Path2D === 'undefined') {
     ellipse() {}
     rect() {}
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).Path2D = MockPath2D;
 }
 

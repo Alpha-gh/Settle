@@ -77,3 +77,10 @@ export function humanizeStatus(status: string): string {
     .join(' ');
 }
 
+/**
+ * Converts a fractional ratio (0..1) into an integer percentage (0..100).
+ */
+export function riskToPercent(risk: number): number {
+  return Math.round(risk * 100);
+}
+

@@ -44,6 +44,7 @@ export const TEST_IDS = {
   drawerPolicy: 'drawer-policy',
   drawerAssumptions: 'drawer-assumptions',
   drawerClose: 'drawer-close',
+  drawerPaypalId: 'drawer-paypal-id',
   worklistRowPrefix: 'worklist-row-',
   worklistRow: (id: string) => `worklist-row-${id}`,
   // Stage 4 Copilot, Audit, Policy, Impact & Demo additions

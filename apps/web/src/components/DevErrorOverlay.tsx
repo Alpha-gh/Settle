@@ -6,6 +6,8 @@ export const DevErrorOverlay: React.FC = () => {
   const [errorInfo, setErrorInfo] = useState<SchemaErrorInfo | null>(null);
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
     const handler = (e: Event) => {
       const customEvent = e as CustomEvent<SchemaErrorInfo>;
       setErrorInfo(customEvent.detail);
@@ -17,7 +19,7 @@ export const DevErrorOverlay: React.FC = () => {
     };
   }, []);
 
-  if (!errorInfo) {
+  if (!import.meta.env.DEV || !errorInfo) {
     return null;
   }
 

@@ -248,7 +248,85 @@ Key test IDs include:
 
 All verification gates have passed completely:
 1. `pnpm --filter web typecheck` -> **0 errors** (`tsc --noEmit`).
-2. `pnpm --filter web test` -> **120 tests passed across 24 test suites** (100% passing).
-3. `pnpm --filter web build` -> **Vite build succeeds**, all chunks < 234 kB gzipped.
-4. `axe-core` accessibility audit -> **0 serious or critical violations** on all routes.
-5. Monorepo boundary check -> **0 changes outside `apps/web/`**.
+2. `pnpm --filter web lint` -> **0 errors, 0 warnings** (`eslint .`).
+3. `pnpm --filter web test` -> **137 tests passed across 27 test files** (100% passing).
+4. `pnpm --filter web test:e2e` -> **12 Playwright tests passed** across smoke flow, accessibility audits, test IDs, and virtualization performance.
+5. `pnpm --filter web build` -> **Vite build succeeds**, all chunks < 234 kB gzipped.
+6. `axe-core` accessibility audit -> **0 serious or critical violations** on all routes and drawers.
+7. Monorepo boundary check -> **0 changes outside `apps/web/`**, `.env` untracked.
+
+---
+
+## 10. 3-Minute Demo Script & Rehearsal Shot List
+
+The following exact sequence delivers the complete Settle story in under 3 minutes for live presentations, video recordings, or evaluation:
+
+| # | Time | User Action | Visual State & Expected UI Response | Narration / What to Say |
+| :--- | :--- | :--- | :--- | :--- |
+| **1** | `0:00` | Open browser to `http://localhost:5173/?demo=1` | Sandbox badge visible ("Sandbox - no real funds"). Red breach banner alerts: *"Payroll November (Bi-weekly) on Fri 6 Nov: short $2,000.00 under your reserve"*. 30-day chart shows closing balance dipping below reserve on Friday. | *"Welcome to Settle. Here is Northwind Studio's cash outlook. Notice the red alert: without intervention, payroll on Friday November 6th will breach our $5,000 operating reserve by exactly $2,000."* |
+| **2** | `0:30` | Click **"Run Settle"** button | Indeterminate progress bar shows *"Running Settle"*. Button disables. Result line appears: *"7 actions proposed, 1 invoice skipped"*. Receivables worklist populates with action pills. | *"We trigger Settle's autonomous engine. Settle analyzes the ledger, computes optimal recovery options under our policy guardrails, and identifies high-probability actions to close the gap."* |
+| **3** | `0:55` | Click **"Co-pilot"** header button | Co-pilot panel slides in smoothly from the right. Focus traps. Suggested prompt chips appear. | *"Let's open the Settle Co-pilot to interrogate our liquidity trajectory in natural language."* |
+| **4** | `1:10` | Click *"Can I cover payroll on Friday?"* prompt chip | Thinking pulse indicator appears. Plain-text answer streams in. Tool call disclosure details ledger queries. Inline simulation chart shows baseline vs proposed recovery trajectory. | *"The Co-pilot confirms our payroll liability, inspects overdue receivables, and projects that recovering Bluefin Media's invoice will preserve our liquidity buffer."* |
+| **5** | `1:30` | Press `Esc` or click `X` to close Co-pilot; click `INV-1001` (Bluefin Media) row in worklist | Action review drawer opens for `act_001`. "Closes the gap" green badge renders. Policy verdict confirms within limits. Hero chart on dashboard overlays blue scenario trajectory. Status timeline highlights `PROPOSED` -> `AWAITING_APPROVAL`. | *"Here is the proposed action for Bluefin Media: a 3% early-settlement discount. Settle proves this action recovers $4,850 and prevents the payroll breach. The timeline strictly reflects API state without premature claims."* |
+| **6** | `2:00` | Click **"Approve"** button in drawer | Approve button enters pending state. Timeline transitions to `APPROVED` (decided by owner). Within ~1.2s, status transitions to `EXECUTED` with a monospace PayPal request ID (`PP-REQ-7F3A91`). | *"With one click, the owner approves the settlement. Settle calls the PayPal Invoicing API, executing the discount and attaching the immutable PayPal tracking reference."* |
+| **7** | `2:25` | In the floating Demo panel, click **"Simulate payment for INV-1001"** | Simulated settlement event triggers via SSE. Worklist row flashes green and updates chip to `Paid`. Red breach alert disappears. Green banner slides in: *"Gap closed: your balance now stays above your reserve"*. Shortfall KPI drops to `$0.00`. | *"Bluefin Media settles their invoice via PayPal. In real-time, the ledger updates: the breach is completely eliminated, cash today increases, and our reserve remains protected."* |
+| **8** | `2:45` | Click **"Audit Log"** in sidebar navigation | Audit timeline displays newest event first: PayPal settlement webhook, followed by owner approval and PayPal API execution with request IDs and expandable JSON details. | *"Every recommendation, human approval, and financial execution is permanently recorded in the immutable audit log for absolute governance and compliance."* |
+| **9** | `2:55` | Click **"Dashboard"** in sidebar navigation | Impact card shows verified Before vs After metrics: initial lowest balance vs after-settlement balance, shortfall closed, and 1 invoice collected. | *"Returning to the dashboard, the Impact card quantifies the tangible business value Settle delivered in seconds: zero shortfall and continuous operational solvency."* |
+
+---
+
+## 11. Contract Component Map
+
+Every data contract imported from `@settle/shared` is mapped to its rendering component and verification suite:
+
+| Domain Type | Shared Interface / Type | Rendering Files | Schema & Validation | Unit & E2E Tests |
+| :--- | :--- | :--- | :--- | :--- |
+| **Snapshot** | `Snapshot`, `Business`, `Obligation` | `KpiCards.tsx`, `BreachBanner.tsx`, `AppShell.tsx` | `snapshotSchema` in `src/api/schemas.ts` | `KpiCards.test.tsx`, `BreachBanner.test.tsx`, `e2e/smoke.spec.ts` |
+| **Invoice** | `Invoice`, `InvoiceStatus` | `Worklist.tsx`, `ActionDrawer.tsx` | `invoiceSchema` in `src/api/schemas.ts` | `Worklist.test.tsx`, `ActionDrawer.test.tsx`, `e2e/perf.spec.ts` |
+| **Payer** | `Payer`, `LatenessRisk` | `Worklist.tsx`, `ActionDrawer.tsx` | `payerSchema` in `src/api/schemas.ts` | `Worklist.test.tsx` |
+| **Forecast** | `ForecastResult`, `DailyBalance`, `BreachDay` | `BalanceChart.tsx`, `GapClosedBanner.tsx`, `ImpactCard.tsx` | `forecastResultSchema` in `src/api/schemas.ts` | `BalanceChart.test.tsx`, `GapClosedBanner.test.tsx`, `e2e/smoke.spec.ts` |
+| **Action** | `ActionRecord`, `ActionType`, `ActionStatus` | `Worklist.tsx`, `ActionDrawer.tsx` | `actionRecordSchema` in `src/api/schemas.ts` | `ActionDrawer.test.tsx`, `Worklist.test.tsx`, `e2e/smoke.spec.ts` |
+| **Policy** | `Policy`, `AutopilotRules` | `PolicyForm.tsx`, `ActionDrawer.tsx` | `policySchema` in `src/api/schemas.ts` | `PolicyForm.test.tsx`, `e2e/a11y.spec.ts`, `e2e/testids.spec.ts` |
+| **Audit** | `AuditEvent`, `AuditActor` | `AuditTimeline.tsx` | `auditEventSchema` in `src/api/schemas.ts` | `AuditTimeline.test.tsx`, `e2e/smoke.spec.ts` |
+| **Chat** | `ChatAnswer`, `ToolCall` | `Copilot.tsx` | `chatAnswerSchema` in `src/api/schemas.ts` | `Copilot.test.tsx`, `e2e/smoke.spec.ts` |
+| **SSE Events** | `SseEvent` | `src/api/sse.tsx`, `src/api/bus.ts` | `sseEventSchema` in `src/api/schemas.ts` | `handlers.test.ts`, `e2e/smoke.spec.ts` |
+
+---
+
+## 12. SSE Reconnection, Exponential Backoff & Cache Invalidation
+
+The real-time streaming layer in `src/api/sse.tsx` guarantees live UI synchronization under lossy network conditions:
+
+1. **Connection Lifecycle**:
+   - In Live Mode (`VITE_API_BASE` set): Connects to native `EventSource("${VITE_API_BASE}/api/events")`.
+   - In Mock Mode (`VITE_API_BASE` empty): Connects to `mockEventBus` in `src/api/bus.ts`.
+2. **Exponential Backoff**:
+   - Initial reconnect attempt: 1,000 ms.
+   - Growth factor: $2.0 \times$ with random jitter ($\pm 20\%$) to prevent thundering herd.
+   - Maximum backoff ceiling: 30,000 ms.
+   - Automatically resets backoff counter upon successful connection.
+3. **Targeted Query Invalidation**:
+   Inbound events do not blindly wipe the cache; they execute fine-grained patches:
+   - `invoice.updated`: Patches snapshot invoices in-place and flashes updated AG Grid rows.
+   - `action.updated`: Updates action record in `actions` cache and refreshes drawer state.
+   - `forecast.updated`: Reconciles `forecast` query and triggers gap-closed detection.
+   - `audit.appended`: Prepends new audit record to the `audit` query cache without scrolling jumps.
+4. **Resilience & Offline Handling**:
+   - Listens to browser `online` and `offline` events.
+   - Displays real-time connection badge in `<AppShell />` (`connected` vs `reconnecting...`).
+
+---
+
+## 13. Edge Cases, Fallbacks & Error Boundaries
+
+System 4 is hardened against exceptional data and network states:
+
+| Scenario | Handled By | UI Behavior & Guarantee |
+| :--- | :--- | :--- |
+| **Network Failure during API Request** | `src/api/queries.ts` + Component Error States | Displays retry card with accessible retry button. Verified across KPI cards, Worklist, Audit log, and Policy form (`errorStates.test.tsx`). |
+| **Zod Schema Parse Mismatch** | `DevErrorOverlay.tsx` & `src/api/schemas.ts` | In development: full-screen diagnostic overlay with endpoint name and offending keys. In production (`!import.meta.env.DEV`): fails silently to regular query retry state. |
+| **Action Lacks Attached Simulation** | `ActionDrawer.tsx` | Renders clear notice *"No simulation attached"* rather than crashing or rendering blank charts. |
+| **No Overdue Invoices in Ledger** | `Worklist.tsx` | Renders calm empty state *"No overdue invoices"*. |
+| **Policy Form String-to-Cents Parsing** | `src/lib/money.ts` | Prevents floating point errors; strictly validates `$0.00` format, rejecting negative numbers or malformed decimals. |
+| **Rapid Double-Clicks on Mutations** | `RunSettleButton.tsx`, `ActionDrawer.tsx` | Synchronous ref submission lock (`isSubmittingRef`) drops duplicate calls instantly. |
+| **Screen Reader Accessibility on Charts** | `BalanceChart.tsx` | Hides AG Charts canvas proxies (`.ag-charts-canvas-proxy`); surfaces container `role="img"` with descriptive sentence and visually hidden HTML data table (`chartFallbackTable`). |

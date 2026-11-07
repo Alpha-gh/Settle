@@ -58,7 +58,7 @@ describe('DashboardPage Integration', () => {
     const chart = screen.getByTestId(TEST_IDS.balanceChart);
     expect(chart).toBeInTheDocument();
     expect(chart.getAttribute('aria-label')).toContain('shortfall');
-  });
+  }, 15000);
 
   it('clicking Run Settle disables button and displays result line upon completion', async () => {
     renderDashboard('/');

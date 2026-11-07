@@ -94,6 +94,7 @@ export const AuditTimeline: React.FC<AuditTimelineProps> = ({ compact = false, l
         <p className="text-xs text-muted">{(error as Error)?.message || 'Network error'}</p>
         <button
           type="button"
+          data-testid="audit-retry"
           onClick={() => refetch()}
           className="px-3 py-1.5 rounded text-xs font-semibold bg-white border border-red-300 text-status-red hover:bg-red-50"
         >
@@ -170,6 +171,7 @@ export const AuditTimeline: React.FC<AuditTimelineProps> = ({ compact = false, l
                   {event.actionId ? (
                     <button
                       type="button"
+                      data-testid={`audit-action-${event.actionId}`}
                       onClick={() => navigate(`/?action=${event.actionId}`)}
                       className="text-accent hover:underline font-medium flex items-center gap-1"
                     >
@@ -179,6 +181,7 @@ export const AuditTimeline: React.FC<AuditTimelineProps> = ({ compact = false, l
                   ) : event.invoiceId ? (
                     <button
                       type="button"
+                      data-testid={`audit-invoice-${event.invoiceId}`}
                       onClick={() => navigate(`/?invoice=${event.invoiceId}`)}
                       className="text-accent hover:underline font-medium flex items-center gap-1"
                     >
@@ -198,6 +201,7 @@ export const AuditTimeline: React.FC<AuditTimelineProps> = ({ compact = false, l
                   {hasDetail && (
                     <button
                       type="button"
+                      data-testid={`audit-toggle-detail-${event.id}`}
                       onClick={() => toggleDetail(event.id)}
                       className="text-muted hover:text-ink text-[11px] font-medium underline ml-auto"
                     >

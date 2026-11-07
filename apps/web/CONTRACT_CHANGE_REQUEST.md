@@ -82,3 +82,46 @@ Consistent discriminated union types ensure compile-time and runtime safety acro
 ### Impact
 System 1 event bus publishers align event names with `@settle/shared`. System 4 validates each inbound event against `sseEventSchema`.
 
+---
+
+## CCR-005: Idempotency Key Headers on Financial Mutations
+
+### What
+Support an optional `Idempotency-Key: <uuid>` header on all POST/PUT mutations:
+- `POST /api/actions/:id/approve`
+- `POST /api/actions/:id/reject`
+- `POST /api/actions/:id/retry`
+- `POST /api/agent/run`
+
+### Why
+Prevents duplicate financial executions in the event of client retries or network blips. System 4 already implements synchronous double-click protection via ref locks; backend idempotency ensures end-to-end payment safety.
+
+### Impact
+System 1 stores idempotency keys with a 24-hour TTL, caching and returning previous responses for replayed requests.
+
+---
+
+## CCR-006: Pre-computed `daysOverdue` in Invoice Contract
+
+### What
+Optionally provide `daysOverdue?: number` directly on `Invoice` in `@settle/shared`:
+```typescript
+export interface Invoice {
+  id: string;
+  number: string;
+  payerId: string;
+  amount: Cents;
+  amountPaid: Cents;
+  dueDate: ISODate;
+  status: InvoiceStatus;
+  daysOverdue?: number; // Pre-calculated whole elapsed days relative to business.asOf
+}
+```
+
+### Why
+To uphold Rule 2 ("No business arithmetic"), System 4 currently derives `daysOverdue` in `src/lib/derive.ts` using UTC date math clamped at 0. Providing this directly from System 2 Engine guarantees exact single-source-of-truth parity across reporting and frontend views.
+
+### Impact
+Additive and non-breaking. When present, System 4 uses the engine-provided integer; when omitted, System 4 falls back to `derive.daysOverdue`.
+
+

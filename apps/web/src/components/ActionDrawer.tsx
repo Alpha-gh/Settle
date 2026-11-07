@@ -124,6 +124,8 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
       <Dialog.Portal>
         <Dialog.Content
           data-testid={TEST_IDS.drawer}
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
           onCloseAutoFocus={(e) => {
             if (lastFocusedElement) {
               e.preventDefault();
@@ -464,7 +466,10 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
                           </div>
                         )}
                         {action.paypalRequestId && (
-                          <div className="text-[11px] font-mono text-muted mt-0.5">
+                          <div
+                            data-testid={TEST_IDS.drawerPaypalId}
+                            className="text-[11px] font-mono text-muted mt-0.5"
+                          >
                             PayPal Request: {action.paypalRequestId}
                           </div>
                         )}

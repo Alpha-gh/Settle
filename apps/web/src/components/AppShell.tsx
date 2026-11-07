@@ -24,6 +24,15 @@ export const AppShell: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans">
+      {/* Skip to main content link for keyboard accessibility */}
+      <a
+        href="#main-content"
+        data-testid="skip-to-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-2 focus:bg-accent focus:text-white focus:rounded focus:font-medium focus:shadow-md focus:outline-none"
+      >
+        Skip to content
+      </a>
+
       {/* Dev schema validation error overlay */}
       <DevErrorOverlay />
 
@@ -91,6 +100,7 @@ export const AppShell: React.FC = () => {
                 key={item.path}
                 to={item.path}
                 end={item.path === '/'}
+                data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
                 className={({ isActive }) =>
                   `flex items-center px-3 py-2 text-sm font-medium rounded transition-colors ${
                     isActive
@@ -128,7 +138,7 @@ export const AppShell: React.FC = () => {
         </aside>
 
         {/* Primary Content Outlet */}
-        <main className="flex-1 overflow-y-auto p-8">
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto p-8 outline-none">
           <Outlet />
         </main>
       </div>

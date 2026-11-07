@@ -19,7 +19,6 @@ describe('Deliberate Corruption Integration Check', () => {
     window.addEventListener('settle:schema-error', eventSpy);
 
     // 1. Deliberately corrupt startingBalance to an invalid string type
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockState.business as any).startingBalance = 'invalid_corrupted_cents';
 
     // Mock global fetch to return the corrupted snapshot from mockState

@@ -15,7 +15,7 @@ import 'ag-grid-community/styles/ag-theme-quartz.css';
 import { useSnapshot, useActions } from '../api/queries';
 import { selectWorklistRows, type WorklistRow } from '../api/selectors';
 import { useSelectedAction } from '../state/selection';
-import { formatUsd, formatDateShort, humanizeStatus } from '../lib/format';
+import { formatUsd, formatDateShort, humanizeStatus, riskToPercent } from '../lib/format';
 import { TEST_IDS } from '../testids';
 import { ActionDrawer } from './ActionDrawer';
 import { mockEventBus } from '../api/bus';
@@ -79,7 +79,7 @@ const PayerRiskRenderer = React.memo(({ data }: CellRendererParams) => {
   if (!data) return null;
   const risk = data.payer?.latenessRisk ?? 0;
   const persona = data.payer?.persona ?? 'unknown';
-  const riskPercent = Math.round(risk * 100);
+  const riskPercent = riskToPercent(risk);
 
   return (
     <div
