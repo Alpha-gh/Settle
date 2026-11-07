@@ -12,9 +12,9 @@ import type {
   ScenarioComparison,
   Snapshot,
 } from '@settle/shared';
-import { EngineError } from './errors.js';
 import { expectedReceipts } from './expectedReceipts.js';
 import { forecast } from './forecast.js';
+import { kpis } from './kpis.js';
 import { generateOptions } from './options.js';
 import { simulate } from './simulate.js';
 
@@ -40,8 +40,8 @@ class Engine implements EnginePort {
     return generateOptions(input, invoice, payer, policy);
   }
 
-  kpis(_snapshot: Snapshot): Kpis {
-    throw new EngineError('NOT_IMPLEMENTED', 'kpis is not implemented yet');
+  kpis(snapshot: Snapshot): Kpis {
+    return kpis(snapshot);
   }
 }
 

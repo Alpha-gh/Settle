@@ -1,0 +1,79 @@
+{
+  "business": {
+    "id": "biz_apex",
+    "name": "Apex Digital Agency",
+    "currency": "USD",
+    "asOf": "2026-11-02",
+    "startingBalance": 1200000,
+    "reserveThreshold": 500000
+  },
+  "obligations": [
+    {
+      "id": "obl_supplier",
+      "label": "Cloud Infrastructure & SaaS",
+      "kind": "supplier",
+      "amount": 200000,
+      "dueDate": "2026-11-04"
+    },
+    {
+      "id": "obl_payroll",
+      "label": "Bi-weekly Team Payroll",
+      "kind": "payroll",
+      "amount": 1100000,
+      "dueDate": "2026-11-06"
+    },
+    {
+      "id": "obl_rent",
+      "label": "Studio Office Lease",
+      "kind": "rent",
+      "amount": 150000,
+      "dueDate": "2026-11-20"
+    }
+  ],
+  "receipts": [
+    {
+      "invoiceId": "inv_003",
+      "amount": 300000,
+      "date": "2026-11-07",
+      "confidence": "uncertain"
+    },
+    {
+      "invoiceId": "inv_001",
+      "amount": 350000,
+      "date": "2026-11-09",
+      "confidence": "uncertain"
+    },
+    {
+      "invoiceId": "inv_002",
+      "amount": 320000,
+      "date": "2026-11-10",
+      "confidence": "expected"
+    },
+    {
+      "invoiceId": "inv_005",
+      "amount": 50000,
+      "date": "2026-11-15",
+      "confidence": "expected"
+    },
+    {
+      "invoiceId": "inv_006",
+      "amount": 60000,
+      "date": "2026-11-18",
+      "confidence": "expected"
+    },
+    {
+      "invoiceId": "inv_007",
+      "amount": 25000,
+      "date": "2026-11-20",
+      "confidence": "expected"
+    },
+    {
+      "invoiceId": "inv_004",
+      "amount": 120000,
+      "date": "2027-01-31",
+      "confidence": "uncertain"
+    }
+  ],
+  "horizonDays": 30,
+  "includeUncertain": false
+}

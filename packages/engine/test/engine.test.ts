@@ -80,7 +80,7 @@ describe('createEngine', () => {
     expect(options[0]?.type).toBe('REMIND');
   });
 
-  it('throws EngineError NOT_IMPLEMENTED for kpis', () => {
+  it('implements kpis and returns calculated metrics', () => {
     const snapshot = {
       business: baseInput.business,
       payers: [payer],
@@ -88,12 +88,12 @@ describe('createEngine', () => {
       obligations: [],
       policy,
     };
-    expect(() => engine.kpis(snapshot)).toThrowError(EngineError);
-    try {
-      engine.kpis(snapshot);
-    } catch (err) {
-      expect(err).toBeInstanceOf(EngineError);
-      expect((err as EngineError).code).toBe('NOT_IMPLEMENTED');
-    }
+    const k = engine.kpis(snapshot);
+    expect(k.cash).toBe(100_000);
+    expect(k.overdueCount).toBe(0);
+    expect(k.overdueTotal).toBe(0);
+    expect(k.avgDaysLate).toBe(0);
+    expect(k.lowest).toBeDefined();
+    expect(k.shortfall).toBeDefined();
   });
 });
