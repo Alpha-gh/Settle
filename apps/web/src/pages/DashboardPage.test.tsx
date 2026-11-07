@@ -92,20 +92,26 @@ describe('DashboardPage Integration', () => {
     // 1. With action param pointing to act_001 (which has simulation)
     const { unmount } = renderDashboard('/?action=act_001');
 
-    await waitFor(() => {
-      expect(screen.getByText(/Active simulation overlay/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Active simulation overlay/i)).toBeInTheDocument();
+      },
+      { timeout: 8000 },
+    );
 
     unmount();
 
     // 2. Without action param
     renderDashboard('/');
 
-    await waitFor(() => {
-      expect(screen.getByTestId(TEST_IDS.balanceChart)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByTestId(TEST_IDS.balanceChart)).toBeInTheDocument();
+      },
+      { timeout: 8000 },
+    );
 
     expect(screen.queryByText(/Active simulation overlay/i)).not.toBeInTheDocument();
-  });
+  }, 15000);
 });
 

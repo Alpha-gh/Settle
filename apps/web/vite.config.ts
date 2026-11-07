@@ -15,5 +15,17 @@ export default defineConfig({
     port: 5173,
     host: true,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-ag-charts': ['ag-charts-community', 'ag-charts-react'],
+          'vendor-ag-grid': ['ag-grid-community', 'ag-grid-react'],
+          'vendor-react': ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+          'vendor-radix': ['@radix-ui/react-dialog'],
+        },
+      },
+    },
+  },
 });
 

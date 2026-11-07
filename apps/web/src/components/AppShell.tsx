@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { TEST_IDS } from '../testids';
 import { useSse } from '../api/sse';
 import { DevErrorOverlay } from './DevErrorOverlay';
+import { Copilot } from './Copilot';
+import { DemoControls } from './DemoControls';
 
 interface NavItem {
   label: string;
@@ -18,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
 
 export const AppShell: React.FC = () => {
   const { connectionState } = useSse();
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col font-sans">
@@ -47,6 +50,31 @@ export const AppShell: React.FC = () => {
             <span className="w-2 h-2 rounded-full bg-amber-600 inline-block" />
             Sandbox - no real funds
           </div>
+
+          {/* Copilot Slide-over Toggle */}
+          <button
+            type="button"
+            data-testid={TEST_IDS.copilotToggle}
+            onClick={() => setIsCopilotOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-accent bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded transition-colors"
+            aria-label="Open Settle Co-pilot"
+          >
+            <svg
+              className="w-4 h-4 text-accent"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+              />
+            </svg>
+            <span>Co-pilot</span>
+          </button>
         </div>
       </header>
 
@@ -104,6 +132,12 @@ export const AppShell: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      {/* Copilot Drawer */}
+      <Copilot isOpen={isCopilotOpen} onClose={() => setIsCopilotOpen(false)} />
+
+      {/* Demo Controls Panel (active when ?demo=1 or settle:demo=1 in sessionStorage) */}
+      <DemoControls />
     </div>
   );
 };

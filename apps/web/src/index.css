@@ -31,3 +31,8 @@ body {
   }
 }
 
+/* Hide AG Charts synthetic proxy container in favor of the outer role="img" and accessible tabular fallback */
+.ag-charts-canvas-proxy {
+  display: none !important;
+}
+

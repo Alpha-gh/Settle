@@ -3,13 +3,14 @@ import { useSnapshot, useForecast, useActions } from '../api/queries';
 import { formatDate } from '../lib/format';
 import { useSelectedAction } from '../state/selection';
 import { useBreachMemory } from '../state/breachMemory';
-import { TEST_IDS } from '../testids';
 import { RunSettleButton } from '../components/RunSettleButton';
 import { BreachBanner } from '../components/BreachBanner';
 import { GapClosedBanner } from '../components/GapClosedBanner';
 import { KpiCards } from '../components/KpiCards';
 import { BalanceChart } from '../components/BalanceChart';
 import { Worklist } from '../components/Worklist';
+import { ImpactCard } from '../components/ImpactCard';
+import { AuditTimeline } from '../components/AuditTimeline';
 
 export const DashboardPage: React.FC = () => {
   const { data: snapshot, isLoading: loadingSnapshot } = useSnapshot();
@@ -82,21 +83,19 @@ export const DashboardPage: React.FC = () => {
         <Worklist height={420} />
       </section>
 
-      {/* 6. Placeholder card: Impact (Stage 4 fills it) */}
-      <div
-        data-testid={TEST_IDS.impactCard}
-        className="bg-surface border border-border rounded p-6"
-      >
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-base font-semibold text-ink">Impact Summary</h2>
-          <span className="text-xs uppercase font-medium text-muted px-2 py-0.5 bg-slate-50 border border-border rounded">
-            Stage 4 Placeholder
-          </span>
+      {/* 6. Impact Recovery Summary (Stage 4) */}
+      <section aria-label="Recovery Impact Summary">
+        <ImpactCard />
+      </section>
+
+      {/* 7. Recent Activity Audit Trail (Stage 4) */}
+      <section aria-label="Recent Audit Activity" className="space-y-3">
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <h2 className="text-base font-semibold text-ink">Recent Audit Activity</h2>
+          <span className="text-xs text-muted">Latest 5 events</span>
         </div>
-        <p className="text-sm text-muted">
-          Summary of cash recovered, reserve shortfall eliminated, and collection velocity metrics.
-        </p>
-      </div>
+        <AuditTimeline compact limit={5} />
+      </section>
     </div>
   );
 };

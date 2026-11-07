@@ -41,6 +41,11 @@ if (typeof window !== 'undefined' && typeof window.matchMedia === 'undefined') {
   }) as unknown as MediaQueryList;
 }
 
+// JSDOM scrollIntoView mock
+if (typeof Element.prototype.scrollIntoView === 'undefined') {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 // JSDOM Path2D mock for AG Charts
 if (typeof globalThis.Path2D === 'undefined') {
   class MockPath2D {

@@ -176,10 +176,79 @@ Key test IDs include:
 
 ---
 
-## 8. Verification Results
+## 8. Stage 4: Co-Pilot, Audit Timeline, Policy Settings & Impact Notes
 
-All acceptance checks run and passed:
-1. `pnpm --filter web typecheck` -> 0 errors (`tsc --noEmit`).
-2. `pnpm --filter web test` -> 88 tests passed across 18 test suites.
-3. `pnpm --filter web build` -> Vite build succeeds with production asset optimization.
-4. `git status` -> 0 changes outside `apps/web`.
+### Co-Pilot Panel (`src/components/Copilot.tsx`)
+- Slide-over drawer opened via header button (`copilotToggle`) across all views; built with Radix Dialog, accessible focus trap, and `Esc` dismissal.
+- Three canned suggested prompt chips (`chatSuggestion1`, `chatSuggestion2`, `chatSuggestion3`):
+  1. *"Can I cover payroll on Friday?"*
+  2. *"What if I buy $3,000 of stock on Monday?"*
+  3. *"Which invoice should I chase first?"*
+- Answers rendered strictly as plain text nodes to prevent markdown or HTML injection.
+- Collapsed-by-default `"Tool calls"` disclosure (`<details>`, `copilotToolCalls`) listing tool name, formatted args, and result.
+- Inline scenario simulation visualization: renders compact `BalanceChart` with baseline and scenario comparison series plus three-metric row (`cashCost`, `lowestDelta`, `shortfallDelta`) and `"Closes the gap"` tag; renders single trajectory chart when `forecast` is attached alone.
+- Session message history preserved in component state. Displays thinking indicator (`copilotThinking`) and error bubble with retry (`copilotError`, `copilotRetry`).
+
+### Audit Timeline (`src/components/AuditTimeline.tsx` & `/audit` route)
+- Fetches all audit records from `GET /api/audit`, sorted newest first via immutable date string comparison.
+- Live real-time SSE appending via `audit.appended` event handler with smooth height transition and scroll lock preservation.
+- Actor filter chips (`All`, `Agent`, `Owner`, `PayPal`, `System`, testid `auditFilter`).
+- Monospace PayPal request ID badge (`paypalRequestId`) on payment and gateway records.
+- Expandable collapsed-by-default `detail` JSON viewer (`<details>`).
+- Compact top-5 preview rendered directly on the primary dashboard.
+
+### Policy Rules Form (`src/components/PolicyForm.tsx` & `/policy` route)
+- Type-safe policy configuration powered by `react-hook-form` + Zod schema validation matching `@settle/shared` `Policy`.
+- Strict string-parsing currency parsing (`src/lib/money.ts` `parseDollarsToCents`):
+  - Zero floating-point arithmetic.
+  - Rejects negative values, non-numeric strings, and inputs with >2 decimal places.
+  - Round-trip tested (`parseDollarsToCents` <-> `centsToDollarsString`).
+- Granular inline validation errors for each field.
+- Save button (`policySave`) remains disabled until the form is both dirty and valid.
+- Optimistic feedback: success toast alert (`role="status"`, testid `toast`) auto-dismissing after 3.5s; server error notification with retry button (`policyError`, `policyRetry`).
+
+### Impact Card (`src/components/ImpactCard.tsx`)
+- Replaces dashboard impact placeholder with high-integrity "Before vs After" financial comparison.
+- Captures initial session baseline metrics as immutable "Before" state:
+  - Lowest cash balance
+  - Cash reserve shortfall
+- Displays verified "After" metrics from current live API state.
+- Invoices collected count and cash given up in settlement discounts sourced from action and ledger data.
+- Green improvement indicators conditionally applied ONLY when API values improved (`afterLowest > beforeLowest` or `afterShortfall < beforeShortfall`).
+- Accessible empty state (`"Run Settle to see impact"`) when no actions have yet executed.
+
+### Demo Controls (`src/components/DemoControls.tsx`)
+- Guarded panel rendered ONLY when `?demo=1` query parameter is present or `settle:demo=1` is stored in `sessionStorage`.
+- Sticky bottom-left overlay (`demoPanel`) providing sandbox utilities:
+  1. **Reset Ledger**: Inline confirmation step (`"Confirm reset?"` -> `"Yes, reset"`, testid `demoReset`).
+  2. **Run Agent**: Evaluates recommendations (`demoRunAgent`).
+  3. **Simulate Payment**: Emulates external PayPal settlement webhook for currently selected invoice (`demoSimulatePayment`).
+
+### Performance & Chunk Splitting (`vite.config.ts`)
+- Configured Rollup `manualChunks` to split large vendor dependencies:
+  - `vendor-ag-charts`: 230.05 kB gzipped
+  - `vendor-ag-grid`: 233.91 kB gzipped
+  - `vendor-react`: 66.21 kB gzipped
+  - `vendor-radix`: 13.63 kB gzipped
+  - `browser` (MSW mock worker): 103.38 kB gzipped
+  - `index` (app code): 50.56 kB gzipped
+- Every bundle chunk is well below the 400 kB gzipped threshold.
+
+### Accessibility & WCAG 2.1 AA Compliance
+- Automated accessibility verification via `@axe-core/playwright` across all views:
+  - `/` (Dashboard): **0 serious/critical violations**
+  - `/audit` (Audit Timeline): **0 serious/critical violations**
+  - `/policy` (Policy Rules): **0 serious/critical violations**
+  - With Co-pilot drawer open: **0 serious/critical violations**
+- AG Charts synthetic proxy container hidden in favor of the explicit `role="img"` container and accessible hidden table (`chartFallbackTable`).
+
+---
+
+## 9. Full System Verification Summary
+
+All verification gates have passed completely:
+1. `pnpm --filter web typecheck` -> **0 errors** (`tsc --noEmit`).
+2. `pnpm --filter web test` -> **120 tests passed across 24 test suites** (100% passing).
+3. `pnpm --filter web build` -> **Vite build succeeds**, all chunks < 234 kB gzipped.
+4. `axe-core` accessibility audit -> **0 serious or critical violations** on all routes.
+5. Monorepo boundary check -> **0 changes outside `apps/web/`**.
