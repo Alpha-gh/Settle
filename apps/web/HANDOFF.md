@@ -60,16 +60,24 @@ Client-side impact derivation adapter is isolated in `src/api/impactAdapter.ts`.
 ## 5. Test Identifiers (Rule 6)
 
 Shared test IDs for unit and Playwright end-to-end tests are exported from `src/testids.ts`.
-Key seeded test IDs include:
+Key test IDs include:
 - `sandboxBadge`: `'sandbox-badge'`
 - `runSettle`: `'run-settle'`
+- `runSettleResult`: `'run-settle-result'`
+- `runSettleProgress`: `'run-settle-progress'`
+- `runSettleError`: `'run-settle-error'`
+- `runSettleRetry`: `'run-settle-retry'`
 - `kpiCash`: `'kpi-cash'`
 - `kpiLowest`: `'kpi-lowest'`
 - `kpiShortfall`: `'kpi-shortfall'`
 - `kpiOverdue`: `'kpi-overdue'`
+- `kpiSkeleton`: `'kpi-skeleton'`
+- `kpiError`: `'kpi-error'`
+- `kpiRetry`: `'kpi-retry'`
 - `breachBanner`: `'breach-banner'`
 - `gapClosedBanner`: `'gap-closed-banner'`
 - `balanceChart`: `'balance-chart'`
+- `chartFallbackTable`: `'chart-fallback-table'`
 - `worklist`: `'worklist'`
 - `drawer`: `'drawer'`
 - `approveButton`: `'approve-button'`
@@ -89,17 +97,33 @@ Key seeded test IDs include:
 
 ---
 
-## 6. MSW Mock Service Worker & State Machine (Rule 7)
+## 6. Stage 2: Dashboard Implementation Notes
 
-- `VITE_API_BASE` unset or empty activates MSW in `src/main.tsx` via `src/mocks/browser.ts`.
-- `MockStateMachine` in `src/mocks/state.ts` implements stateful transitions:
-  - Initial baseline with $2,000 payroll shortfall breach on Friday 2026-11-06.
-  - `POST /api/agent/run`: 1500ms delay, generates 7 actions across distinct statuses (1 auto-approved executed small discount, 1 awaiting approval larger discount that closes gap, 1 skipped).
-  - `POST /api/actions/:id/approve`: transitions immediately to `APPROVED`, then executes via PayPal after ~1200ms.
-  - `POST /api/demo/simulate-payment/:invoiceId`: marks invoice PAID, reconciles cash balance, updates forecast to eliminate breach, and refreshes KPIs.
-  - `POST /api/chat`: canned answers for 3 prompt scenarios with tool calls and comparison data; honest fallback for others.
-  - `?mockInvoices=200`: deterministic generator produces 200 valid invoices for performance tests without `Math.random()`.
-- Real-time updates push via `MockEventBus` (`src/api/bus.ts`) in mock mode or `EventSource` in live mode (`src/api/sse.tsx`).
+### URL-Driven Selection State (`src/state/selection.ts`)
+- Selected action ID is bound to the `?action=` URL search param using `useSelectedAction()`.
+- Synchronizes dashboard, worklist, and drawer across navigation and page reloads.
+
+### Breach Memory & Banner (`src/state/breachMemory.tsx`, `src/components/BreachBanner.tsx`, `src/components/GapClosedBanner.tsx`)
+- `BreachMemoryProvider` preserves session memory of prior breaches without relying on hardcoded dates.
+- When `forecast.firstBreachDate !== null`: displays red alert banner matching snapshot obligation (e.g. `"Payroll November (Bi-weekly) on Fri 6 Nov: short $2,000.00 under your reserve"`) or falls back cleanly if no obligation matches.
+- When `hadBreach === true && forecast.firstBreachDate === null`: displays green status banner (`gapClosedBanner`) reporting `"Gap closed: your balance now stays above your reserve"` and displaying the lowest balance from the API.
+
+### Hero Chart (`src/components/BalanceChart.tsx`)
+- Built with AG Charts Community (`ag-charts-react`).
+- Renders:
+  1. Ink closing line (`#0F172A`).
+  2. Muted dashed reserve line (`#64748B`, `lineDash: [6, 4]`).
+  3. Red breach markers (`#B91C1C`) dynamically conditioned on `belowReserve === true`.
+  4. Blue accent line (`#1D4ED8`) for active simulation scenario overlay when selected action has `simulation.scenario`.
+- Tooltip displays date, receipts, outflows, and closing balance formatted from API values.
+- Accessibility: Container marked `role="img"` with descriptive `aria-label` summarizing lowest balance, date, and breach status; includes a visually hidden `<table>` fallback (`.sr-only`, `chartFallbackTable`) for assistive technologies.
+
+### Run Settle Button (`src/components/RunSettleButton.tsx`)
+- Mutation on `POST /api/agent/run` (`useRunAgent()`).
+- Indeterminate progress bar and `"Running Settle"` label while pending.
+- Guards against concurrent double-clicks via ref guard.
+- Displays inline result (`"7 actions proposed, 1 invoice skipped"`) with worklist focus anchor.
+- Invalidates `actions`, `kpis`, and `forecast` queries upon success.
 
 ---
 
@@ -107,7 +131,6 @@ Key seeded test IDs include:
 
 All acceptance checks run and passed:
 1. `pnpm --filter web typecheck` -> 0 errors.
-2. `pnpm --filter web test` -> 45 tests passed across 8 test suites.
+2. `pnpm --filter web test` -> 68 tests passed across 15 test suites.
 3. `pnpm --filter web build` -> Vite build succeeds with bundle optimization.
 4. `git status` -> 0 changes outside `apps/web`.
-

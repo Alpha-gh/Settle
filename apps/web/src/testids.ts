@@ -29,6 +29,15 @@ export const TEST_IDS = {
   devErrorOverlayDismiss: 'dev-error-overlay-dismiss',
   // Connection indicator
   connectionStatus: 'connection-status',
+  // Stage 2 Dashboard additions
+  runSettleResult: 'run-settle-result',
+  runSettleProgress: 'run-settle-progress',
+  runSettleError: 'run-settle-error',
+  runSettleRetry: 'run-settle-retry',
+  kpiSkeleton: 'kpi-skeleton',
+  kpiError: 'kpi-error',
+  kpiRetry: 'kpi-retry',
+  chartFallbackTable: 'chart-fallback-table',
 } as const;
 
 export type TestIdKey = keyof typeof TEST_IDS;

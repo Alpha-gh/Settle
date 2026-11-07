@@ -1,96 +1,114 @@
-import React from 'react';
-import { useSnapshot, useForecast, useKpis } from '../api/queries';
-import { formatUsd } from '../lib/format';
+import React, { useEffect } from 'react';
+import { useSnapshot, useForecast, useActions } from '../api/queries';
+import { formatDate } from '../lib/format';
+import { useSelectedAction } from '../state/selection';
+import { useBreachMemory } from '../state/breachMemory';
+import { TEST_IDS } from '../testids';
+import { RunSettleButton } from '../components/RunSettleButton';
+import { BreachBanner } from '../components/BreachBanner';
+import { GapClosedBanner } from '../components/GapClosedBanner';
+import { KpiCards } from '../components/KpiCards';
+import { BalanceChart } from '../components/BalanceChart';
 
 export const DashboardPage: React.FC = () => {
   const { data: snapshot, isLoading: loadingSnapshot } = useSnapshot();
   const { data: forecast, isLoading: loadingForecast } = useForecast();
-  const { data: kpis, isLoading: loadingKpis } = useKpis();
+  const { data: actions = [] } = useActions();
+  const { selectedActionId } = useSelectedAction();
+  const { hadBreach, recordForecast } = useBreachMemory();
 
-  if (loadingSnapshot || loadingForecast || loadingKpis) {
-    return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-8 bg-slate-200 rounded w-1/4"></div>
-        <div className="grid grid-cols-4 gap-4">
-          <div className="h-24 bg-slate-200 rounded"></div>
-          <div className="h-24 bg-slate-200 rounded"></div>
-          <div className="h-24 bg-slate-200 rounded"></div>
-          <div className="h-24 bg-slate-200 rounded"></div>
-        </div>
-      </div>
-    );
-  }
+  // Keep breach memory updated from live forecast data
+  useEffect(() => {
+    if (forecast) {
+      recordForecast(forecast);
+    }
+  }, [forecast, recordForecast]);
+
+  // Find simulation scenario if an action is currently selected in URL search params
+  const selectedAction = actions.find((a) => a.id === selectedActionId);
+  const scenarioForecast = selectedAction?.simulation?.scenario;
+  const scenarioLabel = selectedAction
+    ? `Scenario: ${selectedAction.type} (${selectedAction.id})`
+    : undefined;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="max-w-7xl mx-auto space-y-6">
+      {/* 1. Header row: Title "Cash outlook", as-of date from snapshot, Run Settle button */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-border">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-ink">
-            Cashflow & Recovery Dashboard
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight text-ink">Cash outlook</h1>
           <p className="text-sm text-muted">
-            Financial state as of {snapshot?.business.asOf} (Anchor date)
+            {snapshot
+              ? `As of ${formatDate(snapshot.business.asOf)} (${snapshot.business.name})`
+              : 'Loading workspace anchor date...'}
           </p>
         </div>
+        <RunSettleButton />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-surface p-5 rounded border border-border shadow-none">
-          <div className="text-xs font-semibold text-muted uppercase tracking-wider">
-            Current Cash Balance
-          </div>
-          <div className="text-2xl font-bold text-ink mt-2 tabular">
-            {kpis ? formatUsd(kpis.cash) : '—'}
-          </div>
+      {/* 2. Banner area: Breach banner or Gap-closed banner */}
+      {forecast && (
+        <div className="space-y-4">
+          <BreachBanner forecast={forecast} snapshot={snapshot} />
+          <GapClosedBanner forecast={forecast} hadBreach={hadBreach} />
         </div>
+      )}
 
-        <div className="bg-surface p-5 rounded border border-border shadow-none">
-          <div className="text-xs font-semibold text-muted uppercase tracking-wider">
-            Reserve Threshold
-          </div>
-          <div className="text-2xl font-bold text-ink mt-2 tabular">
-            {snapshot ? formatUsd(snapshot.business.reserveThreshold) : '—'}
-          </div>
-        </div>
+      {/* 3. KPI row from GET /api/kpis */}
+      <section aria-label="Key Financial Performance Indicators">
+        <KpiCards />
+      </section>
 
-        <div className="bg-surface p-5 rounded border border-border shadow-none">
-          <div className="text-xs font-semibold text-muted uppercase tracking-wider">
-            Total Overdue Receivables
+      {/* 4. Hero chart card */}
+      <section aria-label="Forecast Liquidity Chart">
+        {loadingForecast || loadingSnapshot || !forecast || !snapshot ? (
+          <div className="h-96 bg-surface border border-border rounded p-6 animate-pulse flex items-center justify-center">
+            <span className="text-sm text-muted">Loading cash forecast chart...</span>
           </div>
-          <div className="text-2xl font-bold text-ink mt-2 tabular">
-            {kpis ? formatUsd(kpis.overdueTotal) : '—'}
-          </div>
-        </div>
+        ) : (
+          <BalanceChart
+            forecast={forecast}
+            reserve={snapshot.business.reserveThreshold}
+            scenario={scenarioForecast}
+            scenarioLabel={scenarioLabel}
+            height={360}
+          />
+        )}
+      </section>
 
-        <div className="bg-surface p-5 rounded border border-border shadow-none">
-          <div className="text-xs font-semibold text-muted uppercase tracking-wider">
-            Projected Shortfall
-          </div>
-          <div
-            className={`text-2xl font-bold mt-2 tabular ${
-              kpis && kpis.shortfall > 0 ? 'text-status-red' : 'text-status-green'
-            }`}
-          >
-            {kpis ? formatUsd(kpis.shortfall) : '—'}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-surface p-6 rounded border border-border">
-        <h2 className="text-base font-semibold text-ink mb-2">30-Day Forecast Summary</h2>
-        <p className="text-sm text-muted">
-          First breach projected:{' '}
-          <span className="font-medium text-ink font-mono">
-            {forecast?.firstBreachDate ?? 'None (Reserve maintained)'}
+      {/* 5. Placeholder card: Receivables (Stage 3 fills it) */}
+      <div
+        id="worklist"
+        tabIndex={-1}
+        data-testid={TEST_IDS.worklist}
+        className="bg-surface border border-border rounded p-6 outline-none focus:ring-2 focus:ring-accent"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-base font-semibold text-ink">Receivables Worklist</h2>
+          <span className="text-xs uppercase font-medium text-muted px-2 py-0.5 bg-slate-50 border border-border rounded">
+            Stage 3 Placeholder
           </span>
-          . Lowest closing balance:{' '}
-          <span className="font-medium text-ink tabular">
-            {forecast ? formatUsd(forecast.lowest.amount) : '—'}
-          </span>{' '}
-          on <span className="font-mono">{forecast?.lowest.date}</span>.
+        </div>
+        <p className="text-sm text-muted">
+          Interactive collections worklist with invoice drawer, automated recovery proposals, and PayPal dispatch.
+        </p>
+      </div>
+
+      {/* 6. Placeholder card: Impact (Stage 4 fills it) */}
+      <div
+        data-testid={TEST_IDS.impactCard}
+        className="bg-surface border border-border rounded p-6"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-base font-semibold text-ink">Impact Summary</h2>
+          <span className="text-xs uppercase font-medium text-muted px-2 py-0.5 bg-slate-50 border border-border rounded">
+            Stage 4 Placeholder
+          </span>
+        </div>
+        <p className="text-sm text-muted">
+          Summary of cash recovered, reserve shortfall eliminated, and collection velocity metrics.
         </p>
       </div>
     </div>
   );
 };
-

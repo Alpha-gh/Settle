@@ -51,7 +51,13 @@ export function dispatchDevSchemaError(info: SchemaErrorInfo): void {
 }
 
 const getBaseUrl = (): string => {
-  return import.meta.env.VITE_API_BASE || '';
+  if (import.meta.env.VITE_API_BASE) {
+    return import.meta.env.VITE_API_BASE;
+  }
+  if (typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null') {
+    return window.location.origin;
+  }
+  return '';
 };
 
 /**
