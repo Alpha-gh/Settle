@@ -9,6 +9,7 @@ import { BreachBanner } from '../components/BreachBanner';
 import { GapClosedBanner } from '../components/GapClosedBanner';
 import { KpiCards } from '../components/KpiCards';
 import { BalanceChart } from '../components/BalanceChart';
+import { Worklist } from '../components/Worklist';
 
 export const DashboardPage: React.FC = () => {
   const { data: snapshot, isLoading: loadingSnapshot } = useSnapshot();
@@ -76,23 +77,10 @@ export const DashboardPage: React.FC = () => {
         )}
       </section>
 
-      {/* 5. Placeholder card: Receivables (Stage 3 fills it) */}
-      <div
-        id="worklist"
-        tabIndex={-1}
-        data-testid={TEST_IDS.worklist}
-        className="bg-surface border border-border rounded p-6 outline-none focus:ring-2 focus:ring-accent"
-      >
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-base font-semibold text-ink">Receivables Worklist</h2>
-          <span className="text-xs uppercase font-medium text-muted px-2 py-0.5 bg-slate-50 border border-border rounded">
-            Stage 3 Placeholder
-          </span>
-        </div>
-        <p className="text-sm text-muted">
-          Interactive collections worklist with invoice drawer, automated recovery proposals, and PayPal dispatch.
-        </p>
-      </div>
+      {/* 5. Receivables Worklist (Stage 3) */}
+      <section aria-label="Receivables Worklist">
+        <Worklist height={420} />
+      </section>
 
       {/* 6. Placeholder card: Impact (Stage 4 fills it) */}
       <div

@@ -202,6 +202,38 @@ export const BalanceChart: React.FC<BalanceChartProps> = ({
     };
   }, [chartData, compact, reserve, scenario, scenarioLabel]);
 
+  if (compact) {
+    return (
+      <div
+        data-testid={TEST_IDS.balanceChart}
+        role="img"
+        aria-label={ariaSummary}
+        className="w-full"
+      >
+        <div style={{ height: `${height}px`, width: '100%' }}>
+          <AgCharts options={chartOptions} />
+        </div>
+        <table
+          data-testid={TEST_IDS.chartFallbackTable}
+          className="sr-only"
+          aria-label="30-day forecast daily balance data table"
+        >
+          <caption>Detailed daily receipts, outflows, and closing balance breakdown</caption>
+          <tbody>
+            {forecast.days.map((day) => (
+              <tr key={day.date}>
+                <td>{formatDate(day.date)}</td>
+                <td>{formatUsd(day.receipts)}</td>
+                <td>{formatUsd(day.outflows)}</td>
+                <td>{formatUsd(day.closing)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid={TEST_IDS.balanceChart}

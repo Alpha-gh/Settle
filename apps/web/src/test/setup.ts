@@ -17,6 +17,30 @@ afterAll(() => {
   server.close();
 });
 
+// JSDOM ResizeObserver mock for AG Grid and responsive containers
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  class MockResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = MockResizeObserver;
+}
+
+// JSDOM matchMedia mock
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'undefined') {
+  window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }) as unknown as MediaQueryList;
+}
+
 // JSDOM Path2D mock for AG Charts
 if (typeof globalThis.Path2D === 'undefined') {
   class MockPath2D {

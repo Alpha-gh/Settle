@@ -127,10 +127,13 @@ export function useApproveAction() {
         old.map((a) => (a.id === updated.id ? updated : a)),
       );
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.forecast });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
     },
   });
 }
+export const useApprove = useApproveAction;
 
 export function useRejectAction() {
   const queryClient = useQueryClient();
@@ -145,10 +148,13 @@ export function useRejectAction() {
         old.map((a) => (a.id === updated.id ? updated : a)),
       );
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.forecast });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
     },
   });
 }
+export const useReject = useRejectAction;
 
 export function useRetryAction() {
   const queryClient = useQueryClient();
@@ -162,10 +168,13 @@ export function useRetryAction() {
         old.map((a) => (a.id === updated.id ? updated : a)),
       );
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.forecast });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
     },
   });
 }
+export const useRetry = useRetryAction;
 
 export function useUpdatePolicy() {
   const queryClient = useQueryClient();

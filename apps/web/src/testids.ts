@@ -38,6 +38,14 @@ export const TEST_IDS = {
   kpiError: 'kpi-error',
   kpiRetry: 'kpi-retry',
   chartFallbackTable: 'chart-fallback-table',
+  // Stage 3 Worklist & Drawer additions
+  drawerReason: 'drawer-reason',
+  drawerTimeline: 'drawer-timeline',
+  drawerPolicy: 'drawer-policy',
+  drawerAssumptions: 'drawer-assumptions',
+  drawerClose: 'drawer-close',
+  worklistRowPrefix: 'worklist-row-',
+  worklistRow: (id: string) => `worklist-row-${id}`,
 } as const;
 
 export type TestIdKey = keyof typeof TEST_IDS;

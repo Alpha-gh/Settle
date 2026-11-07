@@ -80,6 +80,12 @@ Key test IDs include:
 - `chartFallbackTable`: `'chart-fallback-table'`
 - `worklist`: `'worklist'`
 - `drawer`: `'drawer'`
+- `drawerReason`: `'drawer-reason'`
+- `drawerTimeline`: `'drawer-timeline'`
+- `drawerPolicy`: `'drawer-policy'`
+- `drawerAssumptions`: `'drawer-assumptions'`
+- `drawerClose`: `'drawer-close'`
+- `worklistRow`: `'worklist-row-{id}'`
 - `approveButton`: `'approve-button'`
 - `rejectButton`: `'reject-button'`
 - `retryButton`: `'retry-button'`
@@ -127,10 +133,53 @@ Key test IDs include:
 
 ---
 
-## 7. Verification Results
+## 7. Stage 3: Receivables Worklist & Action Drawer Notes
+
+### Pure Join Selector (`src/api/selectors.ts`)
+- `selectWorklistRows(snapshot, actions)` joins `snapshot.invoices`, `snapshot.payers`, and `actions` by `invoiceId`.
+- Computes `daysOverdue` strictly via `derive.daysOverdue(invoice.dueDate, snapshot.business.asOf)` in UTC.
+- Zero business arithmetic.
+
+### Virtualized Receivables Worklist (`src/components/Worklist.tsx`)
+- Powered by AG Grid Community (`ag-grid-react` v32) with Quartz theme styled to calm finance design tokens.
+- Columns:
+  1. **Invoice #** (`pinned: 'left'`) with `data-testid="worklist-row-{invoiceId}"`.
+  2. **Payer**: Name with text filter.
+  3. **Amount**: Right-aligned tabular currency via `formatUsd`.
+  4. **Due Date**: Short formatted date via `formatDateShort`.
+  5. **Days Overdue**: Tabular integer, red emphasis for active overdue invoices.
+  6. **Invoice Status**: Verbatim humanized chip (green for `PAID`, amber for `PARTIALLY_PAID`, neutral for `SENT`/`DRAFT`).
+  7. **Payer Risk**: Horizontal bar reflecting `payer.latenessRisk` with persona text label and accessible meter semantics.
+  8. **Proposed Action**: Verbatim type and status chip (amber for `AWAITING_APPROVAL`, green for `EXECUTED`, red for `BLOCKED`/`FAILED`, neutral for `PROPOSED`/`APPROVED`/`REJECTED`, or `"No action"`).
+- Keyboard Navigation: `Enter` opens drawer for focused row; `Esc` closes drawer and restores focus to the row.
+- Performance: Memoized cell renderers (`React.memo`), `animateRows={false}`, `rowBuffer={10}`. Verified smooth scrolling and filtering with 200 virtualized rows (`?mockInvoices=200`).
+
+### Action Review Drawer (`src/components/ActionDrawer.tsx`)
+- Slide-over drawer built on Radix Dialog (`@radix-ui/react-dialog`) with `modal={false}` so hero scenario simulations on the dashboard remain visible side-by-side.
+- Top-to-bottom layout:
+  1. Header: invoice number, payer name, invoice amount, status chip, close button (`drawerClose`).
+  2. Agent Reason (`drawerReason`): `"Why Settle proposes this"` verbatim reason text.
+  3. Option Details: discount percentage or instalment breakdown.
+  4. Impact Simulation: compact `BalanceChart` with scenario overlay, plus cash given up (`cashCost`), lowest balance change (`lowestDelta`), shortfall change (`shortfallDelta`), and `"Closes the gap"` indicator. Shows explicit `"No simulation attached"` fallback when absent.
+  5. Assumptions List (`drawerAssumptions`): Unordered list from `simulation.assumptions`.
+  6. Policy Safety Review (`drawerPolicy`): Shows allowed status, approval requirement, and prominent red violations list when `BLOCKED` with note `"Blocked by policy. Settle cannot override this."`.
+  7. Status Timeline (`drawerTimeline`): Highlights strictly based on recorded timestamps and statuses. Displays `paypalRequestId` exclusively for `EXECUTED` status. Never claims "sent" or "paid" for pre-execution states.
+  8. Action Controls:
+     - `AWAITING_APPROVAL`: Primary accent "Approve" (`approveButton`) and secondary "Reject" (`rejectButton`). Double-click protected via submission ref lock.
+     - `FAILED`: Error message and "Retry Execution" (`retryButton`).
+     - Terminal/blocked states: Read-only notice.
+
+### Live Real-Time Cell Flashing & SSE Updates
+- Subscribes to event bus for `action.updated` and `invoice.updated`.
+- Applies non-destructive updates and calls `gridApi.flashCells({ rowNodes: [node] })` without unmounting or resetting scroll and selection.
+- Respects `prefers-reduced-motion`.
+
+---
+
+## 8. Verification Results
 
 All acceptance checks run and passed:
-1. `pnpm --filter web typecheck` -> 0 errors.
-2. `pnpm --filter web test` -> 68 tests passed across 15 test suites.
-3. `pnpm --filter web build` -> Vite build succeeds with bundle optimization.
+1. `pnpm --filter web typecheck` -> 0 errors (`tsc --noEmit`).
+2. `pnpm --filter web test` -> 88 tests passed across 18 test suites.
+3. `pnpm --filter web build` -> Vite build succeeds with production asset optimization.
 4. `git status` -> 0 changes outside `apps/web`.

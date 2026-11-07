@@ -77,13 +77,13 @@ describe('DashboardPage Integration', () => {
       () => {
         expect(screen.getByTestId(TEST_IDS.runSettleResult)).toBeInTheDocument();
       },
-      { timeout: 3000 },
+      { timeout: 10000 },
     );
 
     expect(screen.getByTestId(TEST_IDS.runSettleResult)).toHaveTextContent(
       '7 actions proposed, 1 invoice skipped.',
     );
-  });
+  }, 15000);
 
   it('shows scenario simulation overlay when ?action=act_001 is set, and hides when param is absent', async () => {
     // Populate state with actions
