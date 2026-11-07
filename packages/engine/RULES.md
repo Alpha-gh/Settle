@@ -67,31 +67,104 @@ Daily closing balances are computed sequentially:
 
 ---
 
-## 3. Placeholder: Expected Receipts (`expectedReceipts`)
-*(To be implemented in subsequent stage)*
-- Modeling payer persona lateness risk (`avgDaysLate`, `latenessRisk`).
-- Projecting expected settlement dates from invoice due dates and payer behavior.
+## 3. Expected Receipts (`expectedReceipts`)
+
+### 3.1 Eligibility & Net Amount
+- Only invoices with status `SENT` or `PARTIALLY_PAID` produce expected receipts. Invoices in `DRAFT`, `PAID`, `CANCELLED`, or `REFUNDED` status produce nothing.
+- The net remaining balance is calculated with half-up rounding using integer basis-point arithmetic:
+  $$\text{remaining} = \text{applyDiscount}(\text{amount}, \text{discountPct}) - \text{amountPaid}$$
+- Invoices where $\text{remaining} \le 0$ are skipped.
+
+### 3.2 Projected Settlement Date & Clamping
+- For standard payers (`reliable`, `slow`, `chronic`), settlement date projects based on payer historical lateness:
+  $$\text{date} = \max(\text{asOf}, \text{dueDate} + \text{round}(\text{payer.avgDaysLate}))$$
+- Receipts with projected dates earlier than `asOf` are clamped to `asOf` (due immediately).
+
+### 3.3 Persona Confidence Mapping
+- **`reliable`**: Confidence is `expected`.
+- **`slow`**:
+  - If `avgDaysLate <= 14`: confidence is `expected`.
+  - If `avgDaysLate > 14`: confidence is `uncertain`.
+- **`chronic`**: Confidence is `uncertain`.
+- **`ghost`**: Confidence is `uncertain`, and the projected date is set to $\text{asOf} + 90$ calendar days.
+
+### 3.4 Invariants & Ordering
+- Missing payer records for an open invoice throw an `EngineError` with code `NOT_FOUND` explicitly naming the `invoiceId`.
+- Receipts are deterministically sorted by `(date ASC, invoiceId ASC)`.
 
 ---
 
-## 4. Placeholder: Simulate (`simulate`)
-*(To be implemented in subsequent stage)*
-- Evaluating counterfactual scenario changes:
-  - `REMIND` (nudging expected date forward)
-  - `OFFER_DISCOUNT` (early settlement discount with cash cost)
-  - `OFFER_INSTALMENTS` (spreading invoice amounts over multiple dates)
-  - `PURCHASE` (outflow simulation for new capital expenses)
-- Measuring delta on lowest balance, delta on shortfall, and determining whether the change closes the cash gap.
+## 4. Scenario Simulation (`simulate`)
+
+### 4.1 Principles & Referential Transparency
+- `simulate` is a pure counterfactual evaluation that leaves the input completely untouched.
+- A baseline forecast is executed on the input; a scenario forecast is executed on a modified copy reflecting the proposed intervention.
+- The engine does **not** enforce policy constraints during simulation; policy enforcement belongs to the policy gate.
+
+### 4.2 Counterfactual Changes
+- **`REMIND`**:
+  - Moves the invoice receipt date to `newExpectedDate`.
+  - Upgrades confidence to `'expected'`.
+  - $\text{cashCost} = 0$.
+- **`OFFER_DISCOUNT`**:
+  - Discount percentage must be in $(0, 100]$.
+  - **Stacking Assumption**: The discount applies directly against the invoice's existing remaining receipt amount (which may already incorporate prior line-item or invoice-level discounts):
+    $$\text{newAmount} = \text{applyDiscount}(\text{remaining}, \text{discountPct})$$
+  - Date becomes `newExpectedDate`, confidence upgrades to `'expected'`.
+  - **Cash Cost Definition**:
+    $$\text{cashCost} = \text{originalRemaining} - \text{newAmount}$$
+- **`OFFER_INSTALMENTS`**:
+  - Requires integer `count` $\ge 2$ and `spacingDays` $\ge 1$.
+  - The remaining balance is split into `count` instalments:
+    $$\text{basePart} = \lfloor \text{originalAmount} / \text{count} \rfloor, \quad \text{remainder} = \text{originalAmount} \bmod \text{count}$$
+  - **Remainder Allocation**: All remainder cents are allocated to the **first part** ($k = 0$).
+  - Part dates follow $\text{firstDate} + k \times \text{spacingDays}$ for $k = 0 \dots \text{count}-1$.
+  - All parts have confidence `'expected'`.
+  - Parts sum **exactly** to the original amount, with $\text{cashCost} = 0$.
+- **`PURCHASE`**:
+  - Adds an outflow obligation with `kind: 'other'`, a deterministic ID (`sim-purchase-1`), and positive integer `amount`.
+  - $\text{cashCost} = 0$.
+
+### 4.3 Missing Receipts & Aggregation
+- If a receipt-altering change (`REMIND`, `OFFER_DISCOUNT`, `OFFER_INSTALMENTS`) targets an `invoiceId` not found in `input.receipts`, `simulate` throws an `EngineError` with code `NOT_FOUND`.
+- If an invoice has multiple receipts in `input.receipts`, they are aggregated into a single combined receipt for the simulation, and this is noted in `assumptions`.
+
+### 4.4 Metrics & Explanations
+- **Deltas**:
+  $$\text{lowestDelta} = \text{scenario.lowest.amount} - \text{baseline.lowest.amount}$$
+  $$\text{shortfallDelta} = \text{scenario.shortfall} - \text{baseline.shortfall}$$
+  $$\text{closesGap} = (\text{baseline.firstBreachDate} \ne \text{null}) \land (\text{scenario.firstBreachDate} = \text{null})$$
+- **Assumptions**: Deterministic plain-language sentences formatted with integer-math currency (e.g. `"$1,939.99"`), always referencing the prior confidence and date.
 
 ---
 
-## 5. Placeholder: Generate Options (`generateOptions`)
-*(To be implemented in subsequent stage)*
-- Generating eligible intervention options constrained by business policy (`maxDiscountPct`, `maxInstalments`, etc.).
+## 5. Intervention Options Generation (`generateOptions`)
+
+### 5.1 Eligibility
+- Returns an empty list (`[]`) if the invoice status is not `SENT` or `PARTIALLY_PAID`, or if $\text{remaining} \le 0$.
+- Returns `[]` for `ghost` payers because ghost behavior requires out-of-band human escalation.
+
+### 5.2 Option Synthesis
+1. **`REMIND`**: Always generated for non-ghost open invoices. Date offset depends on persona:
+   - `reliable`: $\text{asOf} + 2$
+   - `slow`: $\text{asOf} + 7$
+   - `chronic`: $\text{asOf} + 14$
+2. **`OFFER_DISCOUNT`**: Evaluated at standard tiers `[2, 3, 5]`:
+   - Kept only if $\text{tier} \le \text{policy.maxDiscountPct}$.
+   - Sets $\text{newExpectedDate} = \text{asOf} + 3$.
+   - Eligible for `reliable`, `slow`, and `chronic` personas.
+3. **`OFFER_INSTALMENTS`**:
+   - Generated for counts $2 \dots \text{policy.maxInstalments}$ with $\text{firstDate} = \text{asOf} + 3$ and $\text{spacingDays} = 7$.
+   - Eligible for `slow` and `chronic` personas only (not offered to `reliable`).
+
+### 5.3 Deterministic Ordering
+Options are strictly ordered:
+1. `REMIND`
+2. `OFFER_DISCOUNT` (in ascending order of discount percentage)
+3. `OFFER_INSTALMENTS` (in ascending order of instalment count)
 
 ---
 
 ## 6. Placeholder: KPIs (`kpis`)
 *(To be implemented in subsequent stage)*
 - Calculating aggregate business metrics from snapshot: current cash, total overdue, overdue count, average days late, lowest balance, shortfall, and next obligation.
-

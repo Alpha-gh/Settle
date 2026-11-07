@@ -13,28 +13,31 @@ import type {
   Snapshot,
 } from '@settle/shared';
 import { EngineError } from './errors.js';
+import { expectedReceipts } from './expectedReceipts.js';
 import { forecast } from './forecast.js';
+import { generateOptions } from './options.js';
+import { simulate } from './simulate.js';
 
 class Engine implements EnginePort {
-  expectedReceipts(_invoices: Invoice[], _payers: Payer[], _asOf: ISODate): ExpectedReceipt[] {
-    throw new EngineError('NOT_IMPLEMENTED', 'expectedReceipts is not implemented yet');
+  expectedReceipts(invoices: Invoice[], payers: Payer[], asOf: ISODate): ExpectedReceipt[] {
+    return expectedReceipts(invoices, payers, asOf);
   }
 
   forecast(input: ForecastInput): ForecastResult {
     return forecast(input);
   }
 
-  simulate(_input: ForecastInput, _change: ScenarioChange): ScenarioComparison {
-    throw new EngineError('NOT_IMPLEMENTED', 'simulate is not implemented yet');
+  simulate(input: ForecastInput, change: ScenarioChange): ScenarioComparison {
+    return simulate(input, change);
   }
 
   generateOptions(
-    _input: ForecastInput,
-    _invoice: Invoice,
-    _payer: Payer,
-    _policy: Policy,
+    input: ForecastInput,
+    invoice: Invoice,
+    payer: Payer,
+    policy: Policy,
   ): ScenarioChange[] {
-    throw new EngineError('NOT_IMPLEMENTED', 'generateOptions is not implemented yet');
+    return generateOptions(input, invoice, payer, policy);
   }
 
   kpis(_snapshot: Snapshot): Kpis {
@@ -48,4 +51,3 @@ export function createEngine(): EnginePort {
 
 export type * from '@settle/shared';
 export type { EngineError, EngineErrorCode } from './errors.js';
-
