@@ -235,8 +235,10 @@ describe('API Routes & Contract v1 Integration Tests', () => {
     it('POST /api/actions/:id/approve returns 409 NOT_PROVISIONED for unprovisioned PayPal actions', async () => {
       const listRes = await app.inject({ method: 'GET', url: '/api/actions' });
       const actions = JSON.parse(listRes.payload);
-      const payPalAction = actions.find((a: any) =>
-        ['REMIND', 'OFFER_DISCOUNT', 'OFFER_INSTALMENTS'].includes(a.type),
+      const payPalAction = actions.find(
+        (a: any) =>
+          ['REMIND', 'OFFER_DISCOUNT', 'OFFER_INSTALMENTS'].includes(a.type) &&
+          a.status === 'AWAITING_APPROVAL',
       );
       expect(payPalAction).toBeDefined();
 
@@ -254,7 +256,7 @@ describe('API Routes & Contract v1 Integration Tests', () => {
     it('POST /api/actions/:id/approve executes non-PayPal action (ESCALATE) without error', async () => {
       const listRes = await app.inject({ method: 'GET', url: '/api/actions' });
       const actions = JSON.parse(listRes.payload);
-      const escalateAction = actions.find((a) => a.type === 'ESCALATE');
+      const escalateAction = actions.find((a: any) => a.type === 'ESCALATE' && a.status === 'AWAITING_APPROVAL');
 
       const res = await app.inject({
         method: 'POST',
