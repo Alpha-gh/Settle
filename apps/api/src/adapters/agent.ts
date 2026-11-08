@@ -9,6 +9,10 @@ export function resetAgentInstance(): void {
   agentInstance = null;
 }
 
+export function setAgentInstance(agent: AgentPort | null): void {
+  agentInstance = agent;
+}
+
 export interface Clock {
   now(): Date;
   todayISO(): ISODate;

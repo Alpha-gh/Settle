@@ -14,6 +14,7 @@ import {
   type Policy,
   type ActionRecord,
   type PayPalPort,
+  type AgentRunResult,
   evaluatePolicy,
 } from '@settle/shared';
 import { getEnv, findRepoRoot } from './config/env.js';
@@ -32,6 +33,7 @@ import { runMigrations } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
 import { getAgent } from './adapters/agent.js';
+import { StubAgent } from './adapters/stubs.js';
 import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
 import { PayPalWebhookHandler } from './paypal/webhook.js';
@@ -56,6 +58,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   const app = Fastify({
     bodyLimit: 1048576, // 1MB body limit (Item 4)
+    connectionTimeout: 120000, // 120s timeout (never shorter than 60s)
+    requestTimeout: 120000, // 120s timeout (never shorter than 60s)
     logger: {
       level: env.NODE_ENV === 'test' ? 'warn' : 'info',
       redact: ['req.headers.authorization', 'req.headers.cookie'],
@@ -360,8 +364,40 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
 
     const snapshot = await getCurrentSnapshot();
-    const agent = await getAgent();
-    const result = await agent.runCycle(snapshot);
+    let result: AgentRunResult;
+
+    try {
+      const agent = await getAgent();
+      result = await agent.runCycle(snapshot);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      request.log.error({ err }, 'Agent runCycle failed');
+
+      const errorAudit: AuditEvent = {
+        id: randomUUID(),
+        ts: new Date().toISOString(),
+        actor: 'system',
+        kind: 'agent.error',
+        summary: `Agent runCycle failed: ${errorMessage}`,
+        detail: { error: errorMessage, context: 'runCycle' },
+      };
+      await auditRepo.append(errorAudit);
+      eventBus.emitEvent({ type: 'audit.appended', payload: errorAudit });
+
+      const currentEnv = getEnv();
+      if (currentEnv.AGENT_FALLBACK_TO_STUB) {
+        request.log.warn('AGENT_FALLBACK_TO_STUB=true: falling back to StubAgent for runCycle');
+        const stubAgent = new StubAgent();
+        result = await stubAgent.runCycle(snapshot);
+      } else {
+        return reply.status(502).send({
+          error: {
+            code: 'AGENT_FAILED',
+            message: `Agent execution failed: ${errorMessage}`,
+          },
+        });
+      }
+    }
 
     if (targetInvoiceId) {
       result.actions = result.actions.filter((a) => a.invoiceId === targetInvoiceId);
@@ -510,10 +546,40 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.post('/api/chat', async (request, reply) => {
     const body = ChatRequestBodySchema.parse(request.body);
     const snapshot = await getCurrentSnapshot();
-    const agent = await getAgent();
 
-    const answer = await agent.chat(body.question, snapshot);
-    return answer;
+    try {
+      const agent = await getAgent();
+      const answer = await agent.chat(body.question, snapshot);
+      return answer;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      request.log.error({ err }, 'Agent chat failed');
+
+      const errorAudit: AuditEvent = {
+        id: randomUUID(),
+        ts: new Date().toISOString(),
+        actor: 'system',
+        kind: 'agent.error',
+        summary: `Agent chat failed: ${errorMessage}`,
+        detail: { error: errorMessage, context: 'chat', question: body.question },
+      };
+      await auditRepo.append(errorAudit);
+      eventBus.emitEvent({ type: 'audit.appended', payload: errorAudit });
+
+      const currentEnv = getEnv();
+      if (currentEnv.AGENT_FALLBACK_TO_STUB) {
+        request.log.warn('AGENT_FALLBACK_TO_STUB=true: falling back to StubAgent for chat');
+        const stubAgent = new StubAgent();
+        return stubAgent.chat(body.question, snapshot);
+      } else {
+        return reply.status(502).send({
+          error: {
+            code: 'AGENT_FAILED',
+            message: `Agent execution failed: ${errorMessage}`,
+          },
+        });
+      }
+    }
   });
 
   // 9. Audit Events
