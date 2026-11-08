@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "pnpm --filter @settle/shared build && pnpm --filter @settle/engine build",
+    "predev": "pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/agent build",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
