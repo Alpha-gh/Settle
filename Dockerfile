@@ -49,8 +49,8 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/engine/package.json ./packages/engine/
 COPY apps/api/package.json ./apps/api/
 
-# Install production-only dependencies
-RUN pnpm install --frozen-lockfile --prod
+# Install production-only dependencies (ignore lifecycle scripts)
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
 # Copy compiled artifacts from builder
 COPY seed/ ./seed/
