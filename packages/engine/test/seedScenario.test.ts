@@ -193,6 +193,34 @@ describe('seedScenario', () => {
     assertNoNaN(k);
   });
 
+  it('loads seed/demo.json from repo root and asserts the baseline forecast', () => {
+    const rootDemoPath = path.resolve(__dirname, '../../../seed/demo.json');
+    expect(existsSync(rootDemoPath)).toBe(true);
+    const raw = readFileSync(rootDemoPath, 'utf-8');
+    const demoSnapshot = JSON.parse(raw) as Snapshot;
+
+    const receipts = expectedReceipts(
+      demoSnapshot.invoices,
+      demoSnapshot.payers,
+      demoSnapshot.business.asOf,
+    );
+
+    const input: ForecastInput = {
+      business: demoSnapshot.business,
+      obligations: demoSnapshot.obligations,
+      receipts,
+      horizonDays: 30,
+      includeUncertain: false,
+    };
+
+    const res = forecast(input);
+    expect(res.lowest.amount).toBe(300_000);
+    expect(res.lowest.date).toBe('2026-11-09');
+    expect(res.shortfall).toBe(200_000);
+    expect(res.firstBreachDate).toBe('2026-11-09');
+    assertNoNaN(res);
+  });
+
   const demoPath = path.resolve(__dirname, '../../../seed/demo.json');
   const hasDemo = existsSync(demoPath);
 
