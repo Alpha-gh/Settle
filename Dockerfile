@@ -17,6 +17,9 @@ COPY packages/shared/tsconfig.json ./packages/shared/
 COPY packages/engine/package.json ./packages/engine/
 COPY packages/engine/tsconfig.json ./packages/engine/
 COPY packages/engine/tsconfig.build.json ./packages/engine/
+COPY packages/agent/package.json ./packages/agent/
+COPY packages/agent/tsconfig.json ./packages/agent/
+COPY packages/agent/tsconfig.build.json ./packages/agent/
 COPY apps/api/package.json ./apps/api/
 COPY apps/api/tsconfig.json ./apps/api/
 
@@ -27,10 +30,11 @@ RUN pnpm install --frozen-lockfile
 COPY seed/ ./seed/
 COPY packages/shared/ ./packages/shared/
 COPY packages/engine/ ./packages/engine/
+COPY packages/agent/ ./packages/agent/
 COPY apps/api/ ./apps/api/
 
 # Build TypeScript packages
-RUN pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/api build
+RUN pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/agent build && pnpm --filter @settle/api build
 
 # Stage 2: Production Runner
 FROM node:20-alpine AS runner
@@ -47,6 +51,7 @@ ENV HOST=0.0.0.0
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/engine/package.json ./packages/engine/
+COPY packages/agent/package.json ./packages/agent/
 COPY apps/api/package.json ./apps/api/
 
 # Install production-only dependencies (ignore lifecycle scripts)
@@ -56,6 +61,7 @@ RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 COPY seed/ ./seed/
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder /app/packages/engine/dist ./packages/engine/dist
+COPY --from=builder /app/packages/agent/dist ./packages/agent/dist
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 
 # Secure unprivileged user

@@ -235,11 +235,14 @@ describe('API Routes & Contract v1 Integration Tests', () => {
     it('POST /api/actions/:id/approve returns 409 NOT_PROVISIONED for unprovisioned PayPal actions', async () => {
       const listRes = await app.inject({ method: 'GET', url: '/api/actions' });
       const actions = JSON.parse(listRes.payload);
-      const remindAction = actions.find((a) => a.type === 'REMIND');
+      const payPalAction = actions.find((a: any) =>
+        ['REMIND', 'OFFER_DISCOUNT', 'OFFER_INSTALMENTS'].includes(a.type),
+      );
+      expect(payPalAction).toBeDefined();
 
       const res = await app.inject({
         method: 'POST',
-        url: '/api/actions/' + remindAction.id + '/approve',
+        url: '/api/actions/' + payPalAction.id + '/approve',
         payload: { note: 'Approved by test' },
       });
 
@@ -313,7 +316,7 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/chat',
-        payload: { question: 'What is our current cash shortfall?' },
+        payload: { question: 'Can I cover payroll?' },
       });
 
       expect(res.statusCode).toBe(200);

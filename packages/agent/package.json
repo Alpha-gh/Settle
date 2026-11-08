@@ -1,0 +1,33 @@
+{
+  "name": "@settle/agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./payerSim": {
+      "types": "./dist/payerSim/payerSim.d.ts",
+      "import": "./dist/payerSim/payerSim.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "eval": "tsx scripts/eval.ts"
+  },
+  "dependencies": {
+    "@settle/shared": "workspace:*",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

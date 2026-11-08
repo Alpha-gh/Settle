@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "pnpm --filter @settle/shared build && pnpm --filter @settle/engine build",
+    "predev": "pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/agent build",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
@@ -18,6 +18,7 @@
     "@fastify/helmet": "^13.2.0",
     "@fastify/rate-limit": "^11.2.2",
     "@fastify/static": "^10.1.10",
+    "@settle/agent": "workspace:*",
     "@settle/engine": "workspace:*",
     "@settle/shared": "workspace:*",
     "drizzle-orm": "^0.38.0",

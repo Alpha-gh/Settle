@@ -26,8 +26,13 @@ All environment variables are validated at startup via `validateEnv()` in `src/c
 | `PAYPAL_BUYER_EMAIL` | No | `sb-9rzca53715246@personal.example.com` | Personal buyer sandbox account email for demo checkout. |
 | `PAYPAL_BUYER_PASSWORD` | No | `H/<Om0q#` | Personal buyer sandbox account password. |
 | `ENGINE_IMPL` | No | `real` | Forecast engine backend: `real` (default) or `stub`. |
-| `AGENT_IMPL` | No | `stub` | AI agent backend: `stub` or `real`. |
-| `GEMINI_API_KEY` | No | - | Google Gemini API key for generative recovery reasoning. |
+| `AGENT_IMPL` | No | `real` | AI agent backend: `real` (default) or `stub`. |
+| `LLM_PROVIDER` | No | `gemini` | LLM provider backend: `gemini` (default), `anthropic`, `openai`, or `mock`. |
+| `LLM_MODEL` | No | Provider default | Explicit LLM model override (e.g. `gemini-1.5-flash`, `claude-3-5-sonnet-20241022`, `gpt-4o-mini`). |
+| `AGENT_FALLBACK_TO_STUB` | No | `true` | When `true`, automatically falls back to `StubAgent` and logs an `agent.error` audit event if the real agent fails at runtime. When `false`, returns 502 `AGENT_FAILED`. |
+| `POLICY_IGNORE_QUIET_HOURS` | No | `false` | When `true`, injects a daytime clock (`2026-11-05T12:00:00Z`) so test runs and evaluations are not blocked during real-world quiet hours. |
+| `GEMINI_API_KEY` | No | - | Google Gemini API key for real generative recovery actions and Q&A (free tier available at https://aistudio.google.com/). |
+| `ANTHROPIC_API_KEY` | No | - | Anthropic Claude API key for agent reasoning. |
 | `OPENAI_API_KEY` | No | - | OpenAI API key (alternative LLM backend). |
 
 ---
@@ -158,14 +163,45 @@ The API decouples the engine and agent through modular adapters in `apps/api/src
   `"Failed to load real @settle/engine (ENGINE_IMPL=real): ... Ensure packages/engine is built and installed."`
 
 ### Agent Adapter (`src/adapters/agent.ts`)
-- Controlled by `AGENT_IMPL` (`stub` | `real`).
-- `stub` (default): Uses `StubAgent` from `src/adapters/stubs.ts`. Generates high-confidence recovery actions for overdue invoices respecting policy limits, and provides contextual chat answers.
-- `real`: Dynamically executes `await import('@settle/agent')`. If missing, throws a clear runtime error:
-  `"Failed to load @settle/agent. Ensure packages/agent is built or set AGENT_IMPL=stub."`
+- Controlled by `AGENT_IMPL` (`real` | `stub`), defaulting to `real`.
+- `real` (default):
+  - Dynamically imports `@settle/agent`.
+  - Obtains the engine from `getEngine()`.
+  - Instantiates the LLM client via `createLlmFromEnv(process.env)` respecting `LLM_PROVIDER` and `LLM_MODEL`.
+  - Graceful provider fallback: If the requested provider's API key is not configured, logs a notice and seamlessly falls back to `MockLlm`.
+  - Clock injection: If `POLICY_IGNORE_QUIET_HOURS=true`, injects `FixedClock('2026-11-05T12:00:00Z')` so automated evaluations are not blocked by real-world quiet hours; otherwise injects `SystemClock()`.
+  - Logs the active provider and model at startup.
+- `stub`: Uses `StubAgent` from `src/adapters/stubs.ts` as a minimal fallback or for isolated test runs.
+- **Runtime Error & Fallback Handling**:
+  - `POST /api/agent/run` and `POST /api/chat` wrap agent execution with error handling.
+  - When an error occurs (such as an LLM provider rate limit, network timeout, or schema error), it is logged with Pino and recorded as an `agent.error` audit event.
+  - If `AGENT_FALLBACK_TO_STUB=true` (the default), the request gracefully falls back to `StubAgent` for that execution so demos and user workflows never crash.
+  - If `AGENT_FALLBACK_TO_STUB=false`, the server returns HTTP 502 with `{ error: { code: "AGENT_FAILED", message } }`.
 
 ---
 
-## 6. Financial Contract & Downstream Expectations
+## 6. Obtaining and Configuring a Google Gemini API Key
+
+The `@settle/agent` default provider is `gemini` using the Google Gemini API. A free API key can be obtained in under two minutes:
+
+1. Visit **Google AI Studio**: [https://aistudio.google.com/](https://aistudio.google.com/).
+2. Sign in with your Google account.
+3. Click the **Get API key** button in the left navigation sidebar.
+4. Click **Create API key** (select an existing Google Cloud project or create a free project).
+5. Copy the generated key (`AIzaSy...`).
+6. **Local Development:** Add the key to `apps/api/.env` or root `.env`:
+   ```bash
+   GEMINI_API_KEY=AIzaSy...
+   LLM_PROVIDER=gemini
+   LLM_MODEL=gemini-1.5-flash
+   ```
+7. **Render Deployment:** In the Render Dashboard, open the `settle-api` service, navigate to **Environment**, and add `GEMINI_API_KEY` under the secret environment variables (`sync: false`).
+
+> **Zero-Config Fallback:** If `GEMINI_API_KEY` is not provided, the system does not crash or fail. It automatically selects `MockLlm`, which returns rule-driven action proposals and keyword-grounded chat responses with tool calls to `get_forecast`.
+
+---
+
+## 7. Financial Contract & Downstream Expectations
 
 ### Financial State Invariant
 - **`Business.startingBalance` is current liquid cash on hand.**
@@ -195,9 +231,9 @@ The API decouples the engine and agent through modular adapters in `apps/api/src
 
 ---
 
-## 7. Known Gaps & Recommendations
+## 8. Operating Status & Recommendations
 
-1. **Real LLM Agent Integration**: When `@settle/agent` is implemented, connect `GEMINI_API_KEY` or `OPENAI_API_KEY` to provide dynamic, tone-adapted reminder letter generation for chronic late payers.
+1. **Real LLM Agent Integration**: `@settle/agent` is fully integrated with `AGENT_IMPL=real` as the default. Configured with Google Gemini (`LLM_PROVIDER=gemini`), Anthropic (`anthropic`), OpenAI (`openai`), or `mock`. Fallback to `StubAgent` ensures maximum demo resiliency.
 2. **Server-Sent Events (SSE)**: The API includes an in-memory event bus (`src/events/bus.ts`). Downstream teams can expose a `GET /api/events` SSE stream to trigger automatic browser dashboard refreshes when PayPal webhooks arrive.
 3. **Multi-Tenant Scoping**: The current schema is pre-scoped with foreign keys for `businessId` and `payerId`, but Maya Studio (`biz_001`) is currently the single tenant. Adding session authentication (e.g. Auth0) will allow multi-business operation.
 

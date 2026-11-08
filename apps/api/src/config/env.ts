@@ -69,7 +69,11 @@ export const EnvSchema = z
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default('0.0.0.0'),
     ENGINE_IMPL: z.enum(['stub', 'real']).default('real'),
-    AGENT_IMPL: z.enum(['stub', 'real']).default('stub'),
+    AGENT_IMPL: z.enum(['stub', 'real']).default('real'),
+    AGENT_FALLBACK_TO_STUB: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => (typeof val === 'boolean' ? val : val !== 'false'))
+      .default(true),
     WEB_ORIGIN: z.string().default('http://localhost:5173'),
     WEBHOOK_VERIFY: z
       .union([z.boolean(), z.string()])
@@ -95,7 +99,10 @@ export const EnvSchema = z
       .transform((val) => (typeof val === 'boolean' ? val : val !== 'false'))
       .default(true),
     DEMO_TODAY: z.string().default('2026-11-05'),
+    LLM_PROVIDER: z.string().optional(),
+    LLM_MODEL: z.string().optional(),
     GEMINI_API_KEY: z.string().optional(),
+    ANTHROPIC_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
   })
   .superRefine((data, ctx) => {
