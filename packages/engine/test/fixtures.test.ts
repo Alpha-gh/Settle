@@ -15,8 +15,9 @@ describe('fixtures drift check', () => {
       const filePath = path.join(fixturesDir, filename);
       expect(existsSync(filePath)).toBe(true);
 
-      const actualContent = readFileSync(filePath, 'utf-8');
-      expect(actualContent).toBe(expectedContent);
+      const actualContent = readFileSync(filePath, 'utf-8').replace(/\r\n/g, '\n');
+      const normalizedExpected = expectedContent.replace(/\r\n/g, '\n');
+      expect(actualContent).toBe(normalizedExpected);
     }
   });
 
