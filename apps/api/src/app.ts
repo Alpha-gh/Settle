@@ -631,8 +631,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   // 4. Actions list
-  app.get('/api/actions', async () => {
-    return actionRepo.list();
+  app.get<{ Querystring: { open?: string } }>('/api/actions', async (request) => {
+    const isOpen = request.query?.open === 'true';
+    return actionRepo.list({ open: isOpen });
   });
 
   // 5. Action Approve
