@@ -469,7 +469,7 @@ describe('Stage 4 - Core System 1 Integration & FakePayPal Tests', () => {
     const chatRes = await app.inject({
       method: 'POST',
       url: '/api/chat',
-      payload: { question: 'What is our current cash position?' },
+      payload: { question: 'Can I cover payroll?' },
     });
     expect(chatRes.statusCode).toBe(200);
     const chatJson = JSON.parse(chatRes.payload);
