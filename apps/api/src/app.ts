@@ -598,25 +598,30 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     // Auto-execute allowed-without-approval actions
     for (const action of result.actions) {
-      const invoice = snapshot.invoices.find((i) => i.id === action.invoiceId);
       if (action.status === 'APPROVED' && action.decidedBy === 'auto') {
-        const requiresPayPal = ['REMIND', 'OFFER_DISCOUNT', 'OFFER_INSTALMENTS'].includes(action.type);
-        if (requiresPayPal && (!invoice || !invoice.paypalInvoiceId)) {
-          action.status = 'AWAITING_APPROVAL';
-          action.decidedBy = undefined;
+        try {
+          const executed = await actionService.executeAction(action.id, 'auto');
+          processedActions.push(executed);
+        } catch (autoErr: any) {
+          request.log.error({ autoErr, actionId: action.id }, 'Auto-execution of action failed');
+          action.status = 'FAILED';
+          action.error = autoErr?.message || String(autoErr);
           await actionRepo.update(action);
+
+          const failAudit: AuditEvent = {
+            id: randomUUID(),
+            ts: new Date().toISOString(),
+            actor: 'system',
+            kind: 'action.failed',
+            summary: `Auto-execution of action ${action.id} (${action.type}) failed: ${action.error}`,
+            invoiceId: action.invoiceId,
+            actionId: action.id,
+            detail: { error: action.error },
+          };
+          await auditRepo.append(failAudit);
+          eventBus.emitEvent({ type: 'audit.appended', payload: failAudit });
+          eventBus.emitEvent({ type: 'action.updated', payload: action });
           processedActions.push(action);
-        } else {
-          try {
-            const executed = await actionService.executeAction(action.id, 'auto');
-            processedActions.push(executed);
-          } catch (autoErr: any) {
-            request.log.error({ autoErr, actionId: action.id }, 'Auto-execution of action failed');
-            action.status = 'FAILED';
-            action.error = autoErr?.message || String(autoErr);
-            await actionRepo.update(action);
-            processedActions.push(action);
-          }
         }
       } else {
         processedActions.push(action);
