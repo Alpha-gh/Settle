@@ -81,7 +81,7 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       const policy = JSON.parse(res.payload);
       expect(policy.maxDiscountPct).toBe(5);
       expect(policy.maxInstalments).toBe(3);
-      expect(policy.autoApproveMaxAmount).toBe(50_000);
+      expect(policy.autoApproveMaxAmount).toBe(150_000);
       expect(policy.requireApprovalFor).toEqual([
         'OFFER_DISCOUNT',
         'OFFER_INSTALMENTS',
@@ -133,7 +133,7 @@ describe('API Routes & Contract v1 Integration Tests', () => {
         payload: {
           maxDiscountPct: 5,
           maxInstalments: 3,
-          autoApproveMaxAmount: 50_000,
+          autoApproveMaxAmount: 150_000,
           requireApprovalFor: ['OFFER_DISCOUNT', 'OFFER_INSTALMENTS', 'ESCALATE'],
           quietHours: { startHour: 20, endHour: 8 },
           maxRemindersPerInvoicePerWeek: 2,
@@ -558,7 +558,7 @@ describe('API Routes & Contract v1 Integration Tests', () => {
       const policy = JSON.parse(polRes.payload);
       expect(policy.maxDiscountPct).toBe(5);
       expect(policy.maxInstalments).toBe(3);
-      expect(policy.autoApproveMaxAmount).toBe(50_000);
+      expect(policy.autoApproveMaxAmount).toBe(150_000);
       expect(policy.requireApprovalFor).toEqual([
         'OFFER_DISCOUNT',
         'OFFER_INSTALMENTS',

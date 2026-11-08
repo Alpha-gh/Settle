@@ -267,7 +267,7 @@
   "policy": {
     "maxDiscountPct": 5,
     "maxInstalments": 3,
-    "autoApproveMaxAmount": 50000,
+    "autoApproveMaxAmount": 150000,
     "requireApprovalFor": [
       "OFFER_DISCOUNT",
       "OFFER_INSTALMENTS",

@@ -112,9 +112,9 @@ All error responses strictly follow the shape:
   - *Response*: `{ "text": string, "toolCalls"?: any[], "forecast"?: CashForecast }`
 - **`GET /api/audit`**: Append-only audit log (read-only; no update/delete paths exist).
   - *Response*: `AuditEvent[]`
-- **`GET /api/policy`**: Retrieve active collections policy.
+- **`GET /api/policy`**: Retrieve active collections policy (defaults: `maxDiscountPct: 5`, `maxInstalments: 3`, `autoApproveMaxAmount: 150000` [$1,500], `requireApprovalFor: ['OFFER_DISCOUNT', 'OFFER_INSTALMENTS', 'ESCALATE']`, `quietHours: 20:00-08:00`, `maxRemindersPerInvoicePerWeek: 2`).
   - *Response*: `Policy`
-- **`PUT /api/policy`**: Update policy parameters (max discount, instalments, quiet hours).
+- **`PUT /api/policy`**: Update policy parameters (max discount, instalments, quiet hours, autoApproveMaxAmount).
   - *Body*: `Policy`
   - *Response*: `Policy`
 

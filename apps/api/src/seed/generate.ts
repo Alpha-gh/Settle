@@ -91,7 +91,7 @@ function generate(): Snapshot {
   const policy: Policy = {
     maxDiscountPct: 5,
     maxInstalments: 3,
-    autoApproveMaxAmount: 50_000,
+    autoApproveMaxAmount: 150_000,
     requireApprovalFor: ['OFFER_DISCOUNT', 'OFFER_INSTALMENTS', 'ESCALATE'],
     quietHours: { startHour: 20, endHour: 8 },
     maxRemindersPerInvoicePerWeek: 2,
