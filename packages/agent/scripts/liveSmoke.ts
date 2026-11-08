@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { createAgent } from '../src/agent.js';
 import { FixedClock } from '../src/clock.js';
 import { DeterministicIdGen } from '../src/ids.js';
@@ -7,10 +8,8 @@ import { buildSnapshot } from '../test-support/fixtures.js';
 
 // Try loading local .env if supported
 try {
-  // @ts-expect-error Node 20.12+ built-in
-  if (typeof process.loadEnvFile === 'function') {
-    // @ts-expect-error Node 20.12+ built-in
-    process.loadEnvFile();
+  if (typeof (process as any).loadEnvFile === 'function') {
+    (process as any).loadEnvFile();
   }
 } catch {
   // .env file not found or already loaded

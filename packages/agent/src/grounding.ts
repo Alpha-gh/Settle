@@ -135,30 +135,39 @@ export function extractNumbers(text: string): ExtractedToken[] {
     }
   }
 
-  // 5. Standard Dollar amounts: "$1,234.56", "$1,234", "$500", "1234 dollars", "250000 cents"
+  // 5. Standard Dollar amounts: "$1,234.56", "-$1,234.56", "$1,234", "$500", "1234 dollars", "250000 cents"
   const dollarRegex =
-    /(?:\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)|(\d+(?:,\d{3})*(?:\.\d{2})?)\s*dollars?|(\d+)\s*cents?)\b/gi;
+    /(?:(-)?\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)|(-)?(\d+(?:,\d{3})*(?:\.\d{2})?)\s*dollars?|(-)?(\d+)\s*cents?)\b/gi;
   while ((match = dollarRegex.exec(text)) !== null) {
     if (!isOverlapping(match.index, match.index + match[0].length)) {
       const raw = match[0];
       let cents: number;
-      if (match[1]) {
-        // $1,234.56
-        const clean = match[1].replace(/,/g, '');
-        const parts = clean.split('.');
-        const dollars = parseInt(parts[0] ?? '0', 10);
-        const fraction = parts[1] ? parseInt(parts[1], 10) : 0;
-        cents = dollars * 100 + fraction;
-      } else if (match[2]) {
-        // 1234 dollars
+      if (match[2]) {
+        // $1,234.56 or -$1,234.56
         const clean = match[2].replace(/,/g, '');
         const parts = clean.split('.');
         const dollars = parseInt(parts[0] ?? '0', 10);
         const fraction = parts[1] ? parseInt(parts[1], 10) : 0;
         cents = dollars * 100 + fraction;
-      } else if (match[3]) {
-        // 250000 cents
-        cents = parseInt(match[3], 10);
+        if (match[1] === '-') {
+          cents = -cents;
+        }
+      } else if (match[4]) {
+        // 1234 dollars or -1234 dollars
+        const clean = match[4].replace(/,/g, '');
+        const parts = clean.split('.');
+        const dollars = parseInt(parts[0] ?? '0', 10);
+        const fraction = parts[1] ? parseInt(parts[1], 10) : 0;
+        cents = dollars * 100 + fraction;
+        if (match[3] === '-') {
+          cents = -cents;
+        }
+      } else if (match[6]) {
+        // 250000 cents or -250000 cents
+        cents = parseInt(match[6], 10);
+        if (match[5] === '-') {
+          cents = -cents;
+        }
       } else {
         cents = 0;
       }
@@ -271,8 +280,11 @@ export function buildAllowedSet(facts: GroundingFactsInput): Set<string> {
     allowed.add(`cents:${absCents}`);
     allowed.add(`cents:${cents}`);
     allowed.add(`int:${absCents}`);
+    allowed.add(`int:${cents}`);
     const dollars = Math.floor(absCents / 100);
     allowed.add(`int:${dollars}`);
+    const actualDollars = Math.trunc(cents / 100);
+    allowed.add(`int:${actualDollars}`);
     // Allow corresponding number word if small
     for (const [w, n] of Object.entries(NUMBER_WORDS)) {
       if (n === dollars || n === absCents) {

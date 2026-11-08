@@ -21,6 +21,7 @@ export * from './prompts/selection.js';
 export * from './prompts/decision.js';
 export * from './grounding.js';
 export * from './draftNote.js';
+export * from './payerSim/payerSim.js';
 export * from './chat/tools.js';
 export * from './chat/chat.js';
 export * from './llm/errors.js';

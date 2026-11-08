@@ -133,5 +133,20 @@ describe('grounding adversarial cases', () => {
     expect(res.ok).toBe(false);
     expect(res.offenders).toContain('$1.00');
   });
+
+  it('negative money: extracts and validates -$3,000.00 correctly', () => {
+    const tokens = extractNumbers('Delta is -$3,000.00 for stock purchase.');
+    expect(tokens.some((t) => t.canonical === 'cents:-300000')).toBe(true);
+
+    const negativeAllowed = new Set<string>(['cents:-300000', 'int:3000']);
+    const pass = checkGrounding('Delta is -$3,000.00.', negativeAllowed);
+    expect(pass.ok).toBe(true);
+    expect(pass.offenders).toEqual([]);
+
+    // Different negative amount fails
+    const fail = checkGrounding('Delta is -$2,500.00.', negativeAllowed);
+    expect(fail.ok).toBe(false);
+    expect(fail.offenders).toContain('-$2,500.00');
+  });
 });
 

@@ -5,6 +5,7 @@
  */
 
 import type {
+  DayBalance,
   EnginePort,
   ExpectedReceipt,
   ForecastInput,
@@ -18,18 +19,26 @@ import type {
   ScenarioComparison,
   Snapshot,
 } from '@settle/shared';
+import { addDays } from '../src/clock.js';
 
 export interface FakeEngineOptions {
   closesGapMap?: Map<string, boolean> | Record<string, boolean>;
   defaultClosesGap?: boolean;
+  forecastOverride?:
+    | ForecastResult
+    | ((input: ForecastInput) => ForecastResult);
 }
 
 export class FakeEngine implements EnginePort {
   private readonly closesGapMap: Map<string, boolean>;
   private readonly defaultClosesGap: boolean;
+  private readonly forecastOverride?:
+    | ForecastResult
+    | ((input: ForecastInput) => ForecastResult);
 
   constructor(options: FakeEngineOptions = {}) {
     this.defaultClosesGap = options.defaultClosesGap ?? false;
+    this.forecastOverride = options.forecastOverride;
     if (options.closesGapMap instanceof Map) {
       this.closesGapMap = new Map(options.closesGapMap);
     } else if (options.closesGapMap) {
@@ -157,22 +166,35 @@ export class FakeEngine implements EnginePort {
   }
 
   forecast(input: ForecastInput): ForecastResult {
-    const isBreach = input.business.startingBalance < input.business.reserveThreshold;
+    if (this.forecastOverride) {
+      if (typeof this.forecastOverride === 'function') {
+        return this.forecastOverride(input);
+      }
+      return this.forecastOverride;
+    }
+
+    const isBreach =
+      input.business.startingBalance < input.business.reserveThreshold;
     const shortfall = Math.max(
       0,
       input.business.reserveThreshold - input.business.startingBalance,
     );
 
+    const horizon = input.horizonDays || 30;
+    const days: DayBalance[] = [];
+    for (let i = 0; i < horizon; i++) {
+      const dIso = addDays(input.business.asOf, i);
+      days.push({
+        date: dIso,
+        receipts: 0,
+        outflows: 0,
+        closing: input.business.startingBalance,
+        belowReserve: isBreach,
+      });
+    }
+
     return {
-      days: [
-        {
-          date: input.business.asOf,
-          receipts: 0,
-          outflows: 0,
-          closing: input.business.startingBalance,
-          belowReserve: isBreach,
-        },
-      ],
+      days,
       lowest: {
         date: input.business.asOf,
         amount: input.business.startingBalance,

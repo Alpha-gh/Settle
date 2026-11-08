@@ -372,11 +372,47 @@ export class MockLlm implements LlmPort {
           shortfall: number;
           firstBreachDate: string | null;
           lowest: { date: string; amount: number };
+          days: Array<{
+            date: string;
+            closing: number;
+            belowReserve: boolean;
+          }>;
         };
         toolCalls.push({ name: 'get_forecast', args: {}, result });
 
         if (this.options.chatResponseOverride) {
           return { text: this.options.chatResponseOverride, toolCalls };
+        }
+
+        // Check if user asked about a specific weekday
+        const weekdayMatch = originalUserMessage.match(
+          /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+        );
+
+        if (weekdayMatch && weekdayMatch[1]) {
+          const weekday = weekdayMatch[1];
+          const tableMatch = new RegExp(
+            `\\|\\s*(\\d{4}-\\d{2}-\\d{2})\\s*\\|\\s*${weekday}\\s*\\|`,
+            'i',
+          ).exec(a.system);
+          const askedDate = tableMatch?.[1];
+          const dayBalance = askedDate
+            ? result.days.find((d) => d.date === askedDate)
+            : undefined;
+
+          if (dayBalance && askedDate) {
+            const closingStr = formatUsd(dayBalance.closing);
+            const reserveStatus = dayBalance.belowReserve
+              ? 'below the reserve'
+              : 'above the reserve';
+            const lowestStr = formatUsd(result.lowest.amount);
+            const breachStr = result.firstBreachDate
+              ? `first breach date of ${result.firstBreachDate}`
+              : 'no projected breach';
+
+            const text = `On ${weekday} (${askedDate}), projected closing balance is ${closingStr}, which is ${reserveStatus}. Lowest point across the forecast is ${lowestStr} on ${result.lowest.date} with ${breachStr}.`;
+            return { text, toolCalls };
+          }
         }
 
         const text =

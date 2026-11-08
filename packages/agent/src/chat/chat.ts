@@ -51,8 +51,11 @@ function addAmountTokens(cents: number | undefined, allowed: Set<string>): void 
   allowed.add(`cents:${absCents}`);
   allowed.add(`cents:${cents}`);
   allowed.add(`int:${absCents}`);
+  allowed.add(`int:${cents}`);
   const dollars = Math.floor(absCents / 100);
   allowed.add(`int:${dollars}`);
+  const actualDollars = Math.trunc(cents / 100);
+  allowed.add(`int:${actualDollars}`);
 }
 
 function collectTokensFromValue(val: unknown, allowed: Set<string>): void {

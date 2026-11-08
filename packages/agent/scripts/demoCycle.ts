@@ -1,10 +1,20 @@
+import process from 'node:process';
 import { createAgent } from '../src/agent.js';
 import { FixedClock } from '../src/clock.js';
 import { draftNote } from '../src/draftNote.js';
 import { DeterministicIdGen } from '../src/ids.js';
+import { createLlmFromEnv } from '../src/llm/factory.js';
 import { MockLlm } from '../src/llm/mockLlm.js';
 import { FakeEngine } from '../test-support/fakeEngine.js';
 import { buildSnapshot } from '../test-support/fixtures.js';
+
+try {
+  if (typeof (process as any).loadEnvFile === 'function') {
+    (process as any).loadEnvFile();
+  }
+} catch {
+  // .env file not found or already loaded
+}
 
 async function main() {
   const snapshot = buildSnapshot();
@@ -14,7 +24,12 @@ async function main() {
       inv_002: true,
     },
   });
-  const llm = new MockLlm({ mode: 'good' });
+  let llm;
+  try {
+    llm = createLlmFromEnv(process.env);
+  } catch {
+    llm = new MockLlm({ mode: 'good' });
+  }
   const clock = new FixedClock('2026-11-05T10:00:00Z');
   const idGen = new DeterministicIdGen();
 

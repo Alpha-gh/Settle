@@ -16,6 +16,7 @@ describe('format', () => {
     expect(formatUsd(100)).toBe('$1.00');
     expect(formatUsd(-500)).toBe('-$5.00');
     expect(formatUsd(-5)).toBe('-$0.05');
+    expect(formatUsd(-300000)).toBe('-$3,000.00');
   });
 
   it('formatPercent formats number with percent sign', () => {

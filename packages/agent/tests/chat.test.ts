@@ -46,6 +46,71 @@ describe('Stage 4 - Chat with Tools and Grounding', () => {
     expect(ground.offenders).toEqual([]);
   });
 
+  it('Date-specific answer quotes closing balance for asked day when lowest point is on a different day', async () => {
+    const snapshot = buildSnapshot();
+    // Friday is 2026-11-06 (closing $5,000, above reserve)
+    // Lowest point is Monday 2026-11-09 (closing $1,000, below reserve)
+    const customForecast = {
+      days: [
+        {
+          date: '2026-11-05',
+          receipts: 0,
+          outflows: 0,
+          closing: 450000,
+          belowReserve: false,
+        },
+        {
+          date: '2026-11-06',
+          receipts: 0,
+          outflows: 0,
+          closing: 500000, // $5,000.00 on Friday
+          belowReserve: false,
+        },
+        {
+          date: '2026-11-09',
+          receipts: 0,
+          outflows: 0,
+          closing: 100000, // $1,000.00 lowest
+          belowReserve: true,
+        },
+      ],
+      lowest: {
+        date: '2026-11-09',
+        amount: 100000,
+      },
+      firstBreachDate: '2026-11-09',
+      shortfall: 300000,
+    };
+
+    const engine = new FakeEngine({
+      forecastOverride: customForecast,
+    });
+    const llm = new MockLlm({ mode: 'good' });
+    const clock = new FixedClock('2026-11-05T10:00:00Z');
+    const idGen = new DeterministicIdGen();
+
+    const agent = createAgent({
+      engine,
+      llm,
+      clock,
+      idGen,
+    });
+
+    const answer = await agent.chat('Can I cover payroll on Friday?', snapshot);
+
+    expect(answer.text).toContain('$5,000.00'); // Friday closing
+    expect(answer.text).toContain('above the reserve');
+    expect(answer.text).toContain('$1,000.00'); // Lowest point
+    expect(answer.text).toContain('2026-11-09'); // Lowest date (different from Friday 2026-11-06)
+    expect(answer.text).toContain('first breach date of 2026-11-09');
+
+    // Grounding check passes
+    const allowed = buildChatAllowedSet(snapshot, answer.toolCalls);
+    const ground = checkGrounding(answer.text, allowed);
+    expect(ground.ok).toBe(true);
+    expect(ground.offenders).toEqual([]);
+  });
+
   it('Question 2: "What if I buy $3,000 of stock on Monday?" produces >=1 tool call, grounded text, comparison and forecast populated', async () => {
     const { agent, snapshot } = setupTest({ mode: 'good' });
     const answer = await agent.chat(

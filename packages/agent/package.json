@@ -9,13 +9,17 @@
     ".": {
       "types": "./dist/agent/src/index.d.ts",
       "import": "./dist/agent/src/index.js"
+    },
+    "./payerSim": {
+      "types": "./dist/agent/src/payerSim/payerSim.d.ts",
+      "import": "./dist/agent/src/payerSim/payerSim.js"
     }
   },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "eval": "node -e \"console.log('eval stub')\""
+    "eval": "tsx scripts/eval.ts"
   },
   "dependencies": {
     "@settle/shared": "workspace:*",
