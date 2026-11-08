@@ -38,6 +38,7 @@ import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
 import { PayPalWebhookHandler } from './paypal/webhook.js';
 import { ActionService, NotProvisionedError, ActionNotOpenError } from './services/actions.js';
+import { enrichActionWithDisplayFields } from './utils/provenance.js';
 import { and, eq, inArray } from 'drizzle-orm';
 import { actionRecords, auditEvents } from './db/schema.js';
 import { PaymentReconciliationService } from './services/reconciliation.js';
@@ -628,7 +629,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
 
-      result.actions = processedActions;
+      result.actions = processedActions.map(enrichActionWithDisplayFields);
       return result;
     } finally {
       releaseAgentRunLock();
@@ -638,7 +639,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // 4. Actions list
   app.get<{ Querystring: { open?: string } }>('/api/actions', async (request) => {
     const isOpen = request.query?.open === 'true';
-    return actionRepo.list({ open: isOpen });
+    const actions = await actionRepo.list({ open: isOpen });
+    return actions.map(enrichActionWithDisplayFields);
   });
 
   // 5. Action Approve
@@ -663,7 +665,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
 
     const executed = await actionService.executeAction(id, 'owner');
-    return executed;
+    return enrichActionWithDisplayFields(executed);
   });
 
   // 6. Action Reject
@@ -679,7 +681,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
 
     const rejected = await actionService.rejectAction(id, body.note);
-    return rejected;
+    return enrichActionWithDisplayFields(rejected);
   });
 
   // 7. Simulate Scenario

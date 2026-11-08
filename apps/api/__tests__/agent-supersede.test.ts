@@ -191,4 +191,27 @@ describe('Agent Action Superseding, Closed Action Guard, and Run Lock (Item 4)',
       resetAgentRunLock();
     }
   });
+
+  it('actions returned by GET /api/actions and agent run include reasonDisplay and reasonSource without changing stored reason', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/actions?open=true',
+    });
+    expect(res.statusCode).toBe(200);
+    const actions = JSON.parse(res.payload);
+    expect(actions.length).toBeGreaterThan(0);
+
+    for (const act of actions) {
+      expect(act.reason).toBeDefined();
+      expect(act.reasonDisplay).toBeDefined();
+      // reasonDisplay must not contain the [via ...] tag
+      expect(act.reasonDisplay).not.toMatch(/\[via [^\]]+\]/);
+
+      if (act.reasonSource) {
+        expect(act.reasonSource).toMatch(/\[via [^\]]+\]/);
+        // The original reason should contain the source tag
+        expect(act.reason).toContain(act.reasonSource);
+      }
+    }
+  });
 });

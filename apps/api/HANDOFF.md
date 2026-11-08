@@ -96,8 +96,12 @@ All error responses strictly follow the shape:
   - *Response*: `{ "business": Business, "kpis": KPIs, "forecast": CashForecast, "invoices": Invoice[], "payers": Payer[], "obligations": Obligation[] }`
 - **`GET /api/invoices`**: Returns all 14 invoices in Maya Studio scenario.
   - *Response*: `Invoice[]`
-- **`GET /api/actions`**: Lists proposed and executed recovery actions.
-  - *Response*: `ActionRecord[]`
+- **`GET /api/actions`**: Lists proposed and executed recovery actions (newest first). Supports optional `?open=true` query parameter to return only open actions (`PROPOSED`, `AWAITING_APPROVAL`, `BLOCKED`, `APPROVED`).
+  - *Response*: `(ActionRecord & { reasonDisplay: string, reasonSource?: string })[]`
+  - *Note for Web UI*: Every action record includes two computed helper fields:
+    - `reasonDisplay`: The clean, user-facing rationale with trailing provenance tags stripped out.
+    - `reasonSource`: The provenance metadata tag (e.g. `[via rules; path=rules]`, `[via provider=mock; model=mock-model; path=llm]`), ideal for badges or developer tooltips.
+    - The underlying database field `reason` remains unmodified and preserves the full text.
 - **`POST /api/actions/:id/approve`**: Human-in-the-loop approval. Executes action against PayPal API.
   - *Body*: `{ "note"?: string }`
   - *Response*: `ActionRecord` (status: `"executed"`)
@@ -228,6 +232,8 @@ The `@settle/agent` default provider is `gemini` using the Google Gemini API. A 
 1. Consume `GET /api/dashboard` as the single source of truth for dashboard state.
 2. Build output into `apps/web/dist`. The API will automatically host it with SPA routing fallback.
 3. All dates are ISO 8601 strings (`YYYY-MM-DD`). All currency values are integer cents (`100 cents = $1.00`).
+4. In Action cards and lists, use `action.reasonDisplay` for the primary description and display `action.reasonSource` as an origin badge/pill (e.g., "AI • Gemini" or "Rules").
+5. When filtering active action proposals for approval in the UI, request `GET /api/actions?open=true` to automatically filter out superseded/executed/rejected actions.
 
 ---
 
