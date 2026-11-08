@@ -15,6 +15,7 @@ import type {
   Snapshot,
 } from '@settle/shared';
 import { evaluatePolicy } from '@settle/shared';
+import { runChat } from './chat/chat.js';
 import { SystemClock, type Clock } from './clock.js';
 import { draftNote } from './draftNote.js';
 import { deterministicChoice, templatedReason } from './fallback.js';
@@ -171,9 +172,7 @@ export class SettleAgent implements AgentPort {
           // ESCALATE with templated reason from snapshot data. No LLM call -> path=rules.
           const escalateReason = `Payer persona ${payer.persona} is unresponsive. Escalating invoice ${invoice.number} (${formatUsd(remaining)} due ${invoice.dueDate}) for manual collection.`;
           const actionType: ActionType = 'ESCALATE';
-          const actionParams: ActionParams = {
-            note: `Payer persona ${payer.persona} is unresponsive. Escalated for manual collection.`,
-          };
+          const actionParams: ActionParams = {};
 
           const verdict = evaluatePolicy(
             { type: actionType, params: actionParams },
@@ -384,14 +383,12 @@ export class SettleAgent implements AgentPort {
 
         if (chosenCandidate.id === 'escalate') {
           actionType = 'ESCALATE';
-          actionParams = {
-            note: `Escalated for manual review/collection: ${modelReason}`,
-          };
+          actionParams = {};
         } else {
           switch (chosenCandidate.change.type) {
             case 'REMIND':
               actionType = 'REMIND';
-              actionParams = { note: 'Friendly reminder: {{PAY_URL}}' };
+              actionParams = {};
               break;
 
             case 'OFFER_DISCOUNT':
@@ -474,6 +471,7 @@ export class SettleAgent implements AgentPort {
         let fullReason = modelReason;
 
         if (!verdict.allowed) {
+          delete actionParams.note;
           status = 'BLOCKED';
           fullReason = `${modelReason}. Policy violations: ${verdict.violations.join('; ')}`;
         } else if (verdict.requiresApproval) {
@@ -540,13 +538,10 @@ export class SettleAgent implements AgentPort {
   }
 
   async chat(
-    _question: string,
-    _snapshot: Snapshot,
+    question: string,
+    snapshot: Snapshot,
   ): Promise<ChatAnswer> {
-    return {
-      text: 'Chat is not yet implemented in Stage 2/3',
-      toolCalls: [],
-    };
+    return runChat(question, snapshot, this.engine, this.llm);
   }
 }
 

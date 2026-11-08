@@ -21,6 +21,13 @@ export * from './prompts/selection.js';
 export * from './prompts/decision.js';
 export * from './grounding.js';
 export * from './draftNote.js';
+export * from './chat/tools.js';
+export * from './chat/chat.js';
+export * from './llm/errors.js';
+export * from './llm/geminiLlm.js';
+export * from './llm/anthropicLlm.js';
+export * from './llm/openAiLlm.js';
+export * from './llm/factory.js';
 export * from '@settle/shared';
 
 import { createAgent } from './agent.js';

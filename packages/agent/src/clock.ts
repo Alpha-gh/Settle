@@ -38,3 +38,50 @@ export class FixedClock implements Clock {
   }
 }
 
+const WEEKDAYS = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+] as const;
+
+export function addDays(dateIso: ISODate, days: number): ISODate {
+  const d = new Date(`${dateIso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return formatDateToIso(d);
+}
+
+export function getWeekdayName(dateIso: ISODate): string {
+  const d = new Date(`${dateIso}T00:00:00Z`);
+  return WEEKDAYS[d.getUTCDay()] ?? 'Unknown';
+}
+
+export function generateCalendarTable(asOfIso: ISODate, daysCount = 14): string {
+  const rows: string[] = [
+    '| Date | Day of Week |',
+    '| --- | --- |',
+  ];
+  for (let i = 0; i < daysCount; i++) {
+    const dIso = addDays(asOfIso, i);
+    const dayName = getWeekdayName(dIso);
+    rows.push(`| ${dIso} | ${dayName} |`);
+  }
+  return rows.join('\n');
+}
+
+export function findNextWeekdayIso(asOfIso: ISODate, weekdayName: string): ISODate | null {
+  const target = weekdayName.trim().toLowerCase();
+  for (let i = 0; i < 14; i++) {
+    const dIso = addDays(asOfIso, i);
+    const dayName = getWeekdayName(dIso).toLowerCase();
+    if (dayName === target) {
+      return dIso;
+    }
+  }
+  return null;
+}
+
+

@@ -13,6 +13,7 @@ export interface MockLlmOptions {
   mode?: MockLlmMode;
   slowDelayMs?: number;
   info?: { provider: string; model: string };
+  chatResponseOverride?: string;
 }
 
 export interface CandidateOption {
@@ -144,11 +145,13 @@ export function extractCandidatesFromPrompt(userPrompt: string): {
 }
 
 export class MockLlm implements LlmPort {
+  readonly options: MockLlmOptions;
   readonly mode: MockLlmMode;
   readonly slowDelayMs: number;
   readonly info: { readonly provider: string; readonly model: string };
 
   constructor(options: MockLlmOptions = {}) {
+    this.options = options;
     this.mode = options.mode ?? 'good';
     this.slowDelayMs = options.slowDelayMs ?? 100;
     this.info = options.info ?? { provider: 'mock', model: 'mock-model' };
@@ -183,14 +186,27 @@ export class MockLlm implements LlmPort {
 
       const invoiceNumMatch = a.user.match(/(?:Invoice:\s*|Invoice Number:\s*)([A-Z0-9_-]+)/i);
       const invNumber = invoiceNumMatch?.[1] ?? 'INV-1001';
+      const remainingMatch = a.user.match(/Remaining Balance:\s*(\$[0-9,.]+)/i);
+      const remaining = remainingMatch?.[1] ?? '$1,000.00';
+      const dueDateMatch = a.user.match(/Due Date:\s*(\d{4}-\d{2}-\d{2})/i);
+      const dueDate = dueDateMatch?.[1] ?? '2026-11-05';
+      const discountMatch = a.user.match(/Offered Discount:\s*(\d+)%/i);
+      const discountPct = discountMatch?.[1] ?? '3';
+      const discountedMatch = a.user.match(/Discounted Amount:\s*(\$[0-9,.]+)/i);
+      const discountedAmount = discountedMatch?.[1] ?? remaining;
+      const countMatch = a.user.match(/Instalments:\s*(\d+)/i);
+      const count = countMatch?.[1] ?? '3';
+      const spacingMatch = a.user.match(/Spacing:\s*(\d+)/i);
+      const spacing = spacingMatch?.[1] ?? '30';
+
       const isDiscount = /OFFER_DISCOUNT/i.test(a.user);
       const isInstalments = /OFFER_INSTALMENTS/i.test(a.user);
 
-      let note = `Hello, this is a reminder regarding invoice ${invNumber}. You can review and settle your payment securely here: {{PAY_URL}}. Thank you!`;
+      let note = `Hello, this is a reminder that invoice ${invNumber} for ${remaining} was due on ${dueDate}. Please pay securely here: {{PAY_URL}}. Thank you!`;
       if (isDiscount) {
-        note = `Hello, regarding invoice ${invNumber}, we are pleased to offer a discount to accelerate settlement. You can pay here: {{PAY_URL}}. Thank you!`;
+        note = `Hello, regarding invoice ${invNumber} (${remaining} due on ${dueDate}), we offer a ${discountPct}% discount. You can pay ${discountedAmount} here: {{PAY_URL}}. Thank you!`;
       } else if (isInstalments) {
-        note = `Hello, regarding invoice ${invNumber}, we can offer instalment options to assist with repayment. You can arrange your plan here: {{PAY_URL}}. Thank you!`;
+        note = `Hello, regarding invoice ${invNumber} (${remaining} due on ${dueDate}), we offer ${count} instalments spaced ${spacing} days apart. Pay your first instalment here: {{PAY_URL}}. Thank you!`;
       }
 
       return { note } as unknown as R;
@@ -293,7 +309,7 @@ export class MockLlm implements LlmPort {
     return result as unknown as R;
   }
 
-  async runWithTools(_a: {
+  async runWithTools(a: {
     system: string;
     messages: { role: 'user' | 'assistant'; content: string }[];
     tools: {
@@ -307,6 +323,199 @@ export class MockLlm implements LlmPort {
     text: string;
     toolCalls: { name: string; args: unknown; result: unknown }[];
   }> {
-    throw new Error('NotImplemented: runWithTools is not implemented yet');
+    const originalUserMessage =
+      a.messages.find((m) => m.role === 'user')?.content ?? '';
+    const lastUserMessage =
+      [...a.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+    const isRetry = lastUserMessage.includes('ungrounded');
+
+    if (isRetry && this.options.chatResponseOverride) {
+      return {
+        text: this.options.chatResponseOverride,
+        toolCalls: [],
+      };
+    }
+
+    const userLower = originalUserMessage.toLowerCase();
+
+    // Check scope: out of scope questions (e.g. poem, cats, coding, recipes)
+    const isOutOfScope =
+      userLower.includes('poem') ||
+      userLower.includes('cat') ||
+      userLower.includes('joke') ||
+      userLower.includes('recipe') ||
+      (!userLower.includes('payroll') &&
+        !userLower.includes('stock') &&
+        !userLower.includes('buy') &&
+        !userLower.includes('purchase') &&
+        !userLower.includes('chase') &&
+        !userLower.includes('invoice') &&
+        !userLower.includes('forecast') &&
+        !userLower.includes('overdue'));
+
+    if (isOutOfScope) {
+      return {
+        text: 'I am an accounts-receivable and cash-flow assistant, and I can only help with cash flow forecasting, invoices, and collections.',
+        toolCalls: [],
+      };
+    }
+
+    const toolCalls: { name: string; args: unknown; result: unknown }[] = [];
+    const toolMap = new Map(a.tools.map((t) => [t.name, t]));
+    const max = Math.max(1, a.maxSteps);
+
+    // 1. "cover payroll" / "payroll"
+    if (userLower.includes('payroll') || userLower.includes('cover payroll')) {
+      const forecastTool = toolMap.get('get_forecast');
+      if (forecastTool && toolCalls.length < max) {
+        const result = (await forecastTool.run({})) as {
+          shortfall: number;
+          firstBreachDate: string | null;
+          lowest: { date: string; amount: number };
+        };
+        toolCalls.push({ name: 'get_forecast', args: {}, result });
+
+        if (this.options.chatResponseOverride) {
+          return { text: this.options.chatResponseOverride, toolCalls };
+        }
+
+        const text =
+          result.shortfall > 0 && result.firstBreachDate
+            ? `Based on your cash flow forecast, you have a projected shortfall of ${formatUsd(result.shortfall)} starting on ${result.firstBreachDate}. You will not cover payroll without collecting receivables.`
+            : `Based on your cash flow forecast, your lowest cash point is ${formatUsd(result.lowest.amount)} on ${result.lowest.date} with no shortfall, so you can cover payroll.`;
+
+        return { text, toolCalls };
+      }
+    }
+
+    // 2. "buy $X of stock on <weekday>" / purchase
+    if (
+      userLower.includes('buy') ||
+      userLower.includes('stock') ||
+      userLower.includes('purchase')
+    ) {
+      const amountMatch = originalUserMessage.match(
+        /\$([0-9,]+(?:\.\d{2})?)/,
+      );
+      const weekdayMatch = originalUserMessage.match(
+        /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+      );
+
+      let cents = 300000;
+      if (amountMatch && amountMatch[1]) {
+        const raw = amountMatch[1].replace(/,/g, '');
+        cents = Math.round(parseFloat(raw) * 100);
+      }
+
+      let dateIso = '2026-11-09';
+      if (weekdayMatch && weekdayMatch[1]) {
+        const day = weekdayMatch[1];
+        const tableMatch = new RegExp(
+          `\\|\\s*(\\d{4}-\\d{2}-\\d{2})\\s*\\|\\s*${day}\\s*\\|`,
+          'i',
+        ).exec(a.system);
+        if (tableMatch && tableMatch[1]) {
+          dateIso = tableMatch[1];
+        }
+      }
+
+      const simTool = toolMap.get('simulate_scenario');
+      if (simTool && toolCalls.length < max) {
+        const change = {
+          type: 'PURCHASE',
+          label: 'Stock purchase',
+          amount: cents,
+          date: dateIso,
+        };
+        const result = (await simTool.run({ change })) as {
+          lowestDelta: number;
+          shortfallDelta: number;
+        };
+        toolCalls.push({
+          name: 'simulate_scenario',
+          args: { change },
+          result,
+        });
+
+        if (this.options.chatResponseOverride) {
+          return { text: this.options.chatResponseOverride, toolCalls };
+        }
+
+        const text = `Simulating a stock purchase of ${formatUsd(cents)} on ${dateIso} results in a lowest cash point delta of ${formatUsd(result.lowestDelta)} and shortfall delta of ${formatUsd(result.shortfallDelta)}.`;
+
+        return { text, toolCalls };
+      }
+    }
+
+    // 3. "which invoice ... first" / "chase"
+    if (
+      userLower.includes('which invoice') ||
+      userLower.includes('chase') ||
+      userLower.includes('first')
+    ) {
+      const listTool = toolMap.get('list_overdue_invoices');
+      if (listTool && toolCalls.length < max) {
+        const listResult = (await listTool.run({})) as {
+          invoices: Array<{
+            id: string;
+            number: string;
+            remainingAmount: number;
+            dueDate: string;
+          }>;
+        };
+        toolCalls.push({
+          name: 'list_overdue_invoices',
+          args: {},
+          result: listResult,
+        });
+
+        const top = listResult.invoices[0];
+        if (top && toolCalls.length < max) {
+          const compTool = toolMap.get('compare_options');
+          if (compTool) {
+            const compResult = (await compTool.run({
+              invoiceId: top.id,
+            })) as {
+              candidates: Array<{
+                simulation: { lowestDelta: number };
+              }>;
+            };
+            toolCalls.push({
+              name: 'compare_options',
+              args: { invoiceId: top.id },
+              result: compResult,
+            });
+
+            if (this.options.chatResponseOverride) {
+              return { text: this.options.chatResponseOverride, toolCalls };
+            }
+
+            const delta =
+              compResult.candidates[0]?.simulation.lowestDelta ?? 0;
+            const text = `You should chase invoice ${top.number} for ${formatUsd(top.remainingAmount)} due on ${top.dueDate} first. Reminding them yields a lowest cash delta of ${formatUsd(delta)}.`;
+
+            return { text, toolCalls };
+          }
+        }
+
+        if (this.options.chatResponseOverride) {
+          return { text: this.options.chatResponseOverride, toolCalls };
+        }
+
+        return {
+          text: `Found ${listResult.invoices.length} overdue invoices.`,
+          toolCalls,
+        };
+      }
+    }
+
+    if (this.options.chatResponseOverride) {
+      return { text: this.options.chatResponseOverride, toolCalls };
+    }
+
+    return {
+      text: 'No relevant cash flow tools could be executed.',
+      toolCalls,
+    };
   }
 }

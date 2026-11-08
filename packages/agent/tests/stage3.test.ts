@@ -14,6 +14,51 @@ import { buildSnapshot } from '../test-support/fixtures.js';
 describe('Stage 3 - Grounding, Draft Notes, and Provenance', () => {
   const clock = new FixedClock('2026-11-05T10:00:00Z');
 
+  it('ESCALATE and BLOCKED actions never have params.note and draftNote is never called for them', async () => {
+    const base = buildSnapshot();
+    const ghostPayer = base.payers.find((p) => p.persona === 'ghost')!;
+    const ghostInv = base.invoices.find((i) => i.payerId === ghostPayer.id)!;
+    const reliablePayer = base.payers.find((p) => p.persona === 'reliable')!;
+    const quietInv = base.invoices.find((i) => i.payerId === reliablePayer.id)!;
+
+    // 1. Ghost payer -> ESCALATE
+    const llmGhost = new MockLlm({ mode: 'good' });
+    const spyGhost = vi.spyOn(llmGhost, 'generateStructured');
+    const agentGhost = createAgent({
+      engine: new FakeEngine(),
+      llm: llmGhost,
+      clock,
+    });
+    const resGhost = await agentGhost.runCycle(
+      buildSnapshot({ payers: [ghostPayer], invoices: [ghostInv] }),
+    );
+    expect(resGhost.actions[0]!.type).toBe('ESCALATE');
+    expect(resGhost.actions[0]!.params.note).toBeUndefined();
+    const draftCallsGhost = spyGhost.mock.calls.filter(
+      (c) => (c[0].jsonSchema as any)?.title === 'draft_note',
+    );
+    expect(draftCallsGhost).toHaveLength(0);
+
+    // 2. Quiet hours -> BLOCKED
+    const quietClock = new FixedClock('2026-11-05T22:00:00Z');
+    const llmBlocked = new MockLlm({ mode: 'good' });
+    const spyBlocked = vi.spyOn(llmBlocked, 'generateStructured');
+    const agentBlocked = createAgent({
+      engine: new FakeEngine(),
+      llm: llmBlocked,
+      clock: quietClock,
+    });
+    const resBlocked = await agentBlocked.runCycle(
+      buildSnapshot({ payers: [reliablePayer], invoices: [quietInv] }),
+    );
+    expect(resBlocked.actions[0]!.status).toBe('BLOCKED');
+    expect(resBlocked.actions[0]!.params.note).toBeUndefined();
+    const draftCallsBlocked = spyBlocked.mock.calls.filter(
+      (c) => (c[0].jsonSchema as any)?.title === 'draft_note',
+    );
+    expect(draftCallsBlocked).toHaveLength(0);
+  });
+
   it('three paths test: rules, llm, fallback', async () => {
     const base = buildSnapshot();
     const ghostPayer = base.payers.find((p) => p.persona === 'ghost')!;
