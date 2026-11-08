@@ -89,6 +89,10 @@ To receive live asynchronous payment notifications (`INVOICING.INVOICE.PAID`) wh
 - It emits clean CommonJS/ESM outputs to `packages/engine/dist/index.js` via `tsconfig.build.json`.
 - The production runner container copies `packages/engine/dist` and `packages/engine/package.json`, making `@settle/engine` resolve natively without dev dependencies.
 
+### Production Install & `--ignore-scripts`
+- In Stage 2 (the production runner), `pnpm install --frozen-lockfile --prod --ignore-scripts` is executed with `--ignore-scripts`.
+- **Why scripts are ignored in production install:** Dev tools such as TypeScript (`tsc`) and bundlers are devDependencies and are deliberately omitted during `--prod` installs. If lifecycle scripts (such as `prepare` or `postinstall`) attempt to compile TypeScript in a production install, they fail with `spawn ENOENT: tsc`. Using `--ignore-scripts` guarantees that production dependency installation never executes missing build tools, relying instead on the precompiled `dist/` artifacts copied from the builder stage.
+
 ### Environment Configuration
 - **`ENGINE_IMPL=real` (default):** Dynamically loads `@settle/engine` via `createEngine()`, providing pure, deterministic integer-cents cash forecasting and counterfactual scenario simulations.
 - **`ENGINE_IMPL=stub` (fallback):** Reverts to `StubEngine` from `src/adapters/stubs.ts` if running in an isolated test harness without the engine package.
