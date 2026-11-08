@@ -116,7 +116,7 @@ Settle includes a multi-stage production `Dockerfile` and a declarative `render.
 | `DEMO_TODAY` | No | `2026-11-05` | Anchor date for Maya Studio demo scenario. |
 | `PAYPAL_BUYER_EMAIL` | No | `sb-9rzca53715246@personal.example.com` | Default PayPal Sandbox personal buyer email. |
 | `PAYPAL_BUYER_PASSWORD` | No | `H/<Om0q#` | Default PayPal Sandbox personal buyer password. |
-| `ENGINE_IMPL` | No | `stub` | Forecast engine implementation (`stub` \| `real`). |
+| `ENGINE_IMPL` | No | `real` | Forecast engine implementation (`stub` \| `real`). Defaults to `real`. |
 | `AGENT_IMPL` | No | `stub` | AI agent implementation (`stub` \| `real`). |
 | `GEMINI_API_KEY` | No | - | Google Gemini API key for generative recovery agent. |
 | `OPENAI_API_KEY` | No | - | OpenAI API key (alternative LLM backend). |

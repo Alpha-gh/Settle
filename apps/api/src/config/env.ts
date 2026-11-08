@@ -68,7 +68,7 @@ export const EnvSchema = z
     TEST_DATABASE_URL: z.string().optional(),
     PORT: z.coerce.number().default(3000),
     HOST: z.string().default('0.0.0.0'),
-    ENGINE_IMPL: z.enum(['stub', 'real']).default('stub'),
+    ENGINE_IMPL: z.enum(['stub', 'real']).default('real'),
     AGENT_IMPL: z.enum(['stub', 'real']).default('stub'),
     WEB_ORIGIN: z.string().default('http://localhost:5173'),
     WEBHOOK_VERIFY: z

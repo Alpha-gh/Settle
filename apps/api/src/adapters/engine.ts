@@ -2,7 +2,13 @@ import type { EnginePort } from '@settle/shared';
 import { getEnv } from '../config/env.js';
 import { StubEngine } from './stubs.js';
 
+export { StubEngine };
+
 let engineInstance: EnginePort | null = null;
+
+export function resetEngineInstance(): void {
+  engineInstance = null;
+}
 
 export async function getEngine(): Promise<EnginePort> {
   if (engineInstance) return engineInstance;

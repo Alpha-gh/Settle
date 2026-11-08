@@ -25,7 +25,7 @@ All environment variables are validated at startup via `validateEnv()` in `src/c
 | `DEMO_TODAY` | No | `2026-11-05` | Simulation anchor date for Maya Studio demo dataset. |
 | `PAYPAL_BUYER_EMAIL` | No | `sb-9rzca53715246@personal.example.com` | Personal buyer sandbox account email for demo checkout. |
 | `PAYPAL_BUYER_PASSWORD` | No | `H/<Om0q#` | Personal buyer sandbox account password. |
-| `ENGINE_IMPL` | No | `stub` | Forecast engine backend: `stub` or `real`. |
+| `ENGINE_IMPL` | No | `real` | Forecast engine backend: `real` (default) or `stub`. |
 | `AGENT_IMPL` | No | `stub` | AI agent backend: `stub` or `real`. |
 | `GEMINI_API_KEY` | No | - | Google Gemini API key for generative recovery reasoning. |
 | `OPENAI_API_KEY` | No | - | OpenAI API key (alternative LLM backend). |
@@ -151,10 +151,11 @@ During System 1 implementation and live PayPal Sandbox testing, the following em
 The API decouples the engine and agent through modular adapters in `apps/api/src/adapters/`:
 
 ### Engine Adapter (`src/adapters/engine.ts`)
-- Controlled by `ENGINE_IMPL` (`stub` | `real`).
-- `stub` (default): Uses `StubEngine` from `src/adapters/stubs.ts`. Computes 30-day daily cashflow, calculates overdue total ($14,100), and simulates what-if scenarios accurately.
-- `real`: Dynamically executes `await import('@settle/engine')`. If the package is not yet implemented or built, throws a clear runtime error:
-  `"Failed to load @settle/engine. Ensure packages/engine is built or set ENGINE_IMPL=stub."`
+- Controlled by `ENGINE_IMPL` (`real` | `stub`).
+- `real` (default): Dynamically executes `await import('@settle/engine')` and instantiates the real pure Cash Engine via `createEngine()`.
+- `stub`: Uses `StubEngine` from `src/adapters/stubs.ts` as a fallback or for isolated test runs.
+- If `@settle/engine` fails to load under `ENGINE_IMPL=real`, throws a clear runtime error:
+  `"Failed to load real @settle/engine (ENGINE_IMPL=real): ... Ensure packages/engine is built and installed."`
 
 ### Agent Adapter (`src/adapters/agent.ts`)
 - Controlled by `AGENT_IMPL` (`stub` | `real`).
