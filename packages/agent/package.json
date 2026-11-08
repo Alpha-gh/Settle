@@ -3,22 +3,22 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "main": "./dist/agent/src/index.js",
-  "types": "./dist/agent/src/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/agent/src/index.d.ts",
-      "import": "./dist/agent/src/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./payerSim": {
-      "types": "./dist/agent/src/payerSim/payerSim.d.ts",
-      "import": "./dist/agent/src/payerSim/payerSim.js"
+      "types": "./dist/payerSim/payerSim.d.ts",
+      "import": "./dist/payerSim/payerSim.js"
     }
   },
   "scripts": {
-    "build": "tsc",
-    "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
     "eval": "tsx scripts/eval.ts"
   },
   "dependencies": {
