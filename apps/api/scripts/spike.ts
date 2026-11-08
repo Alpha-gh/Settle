@@ -69,7 +69,7 @@ async function runSpike(): Promise<void> {
   console.log(`PayPal Invoice ID: ${paypalInvoiceId}`);
   console.log(`Payer Payment Link: ${payUrl}`);
 
-  let currentStatus = await client.getInvoice(paypalInvoiceId);
+  const currentStatus = await client.getInvoice(paypalInvoiceId);
   console.log(`Initial Status: ${currentStatus.status}, Amount Paid: ${currentStatus.amountPaid} cents`);
 
   // 4. Send Reminder

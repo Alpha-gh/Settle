@@ -90,6 +90,13 @@ export const EnvSchema = z
       .union([z.boolean(), z.string()])
       .transform((val) => (typeof val === 'boolean' ? val : val === 'true'))
       .default(false),
+    PAYPAL_NUMBER_SUFFIX: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => (typeof val === 'boolean' ? val : val !== 'false'))
+      .default(true),
+    DEMO_TODAY: z.string().default('2026-11-05'),
+    GEMINI_API_KEY: z.string().optional(),
+    OPENAI_API_KEY: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== 'test') {
@@ -125,6 +132,26 @@ export function getEnv(overrides: Record<string, string | undefined> = {}): ApiE
     cachedEnv = EnvSchema.parse(process.env);
   }
   return cachedEnv;
+}
+
+
+export function validateEnv(overrides: Record<string, string | undefined> = {}): ApiEnv {
+  try {
+    resetCachedEnv();
+    return getEnv(overrides);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      console.error('\n================================================================================');
+      console.error('🚨 CONFIGURATION ERROR: Invalid environment variables!');
+      console.error('--------------------------------------------------------------------------------');
+      for (const issue of err.issues) {
+        const p = issue.path.join('.') || 'root';
+        console.error(`- ${p}: ${issue.message}`);
+      }
+      console.error('================================================================================\n');
+    }
+    throw err;
+  }
 }
 
 export function resetCachedEnv(): void {

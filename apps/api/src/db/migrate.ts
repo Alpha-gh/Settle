@@ -88,12 +88,20 @@ export async function runMigrations(): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS invoice_paypal_ids (
       id TEXT PRIMARY KEY,
-      invoice_id TEXT NOT NULL REFERENCES invoices(id),
+      invoice_id TEXT NOT NULL,
       paypal_invoice_id TEXT NOT NULL,
+      paypal_invoice_number TEXT,
       created_at TEXT NOT NULL,
       replaced_at TEXT,
       reason TEXT
     );
+
+    -- Add paypal_invoice_number column if missing from earlier migration
+    ALTER TABLE invoice_paypal_ids ADD COLUMN IF NOT EXISTS paypal_invoice_number TEXT;
+
+    -- Drop foreign key on invoices(id) if it exists so demo reset can preserve history
+    ALTER TABLE invoice_paypal_ids DROP CONSTRAINT IF EXISTS invoice_paypal_ids_invoice_id_fkey;
+    ALTER TABLE invoice_paypal_ids DROP CONSTRAINT IF EXISTS invoice_paypal_ids_invoice_id_invoices_id_fk;
 
     CREATE TABLE IF NOT EXISTS processed_webhook_events (
       id TEXT PRIMARY KEY,
@@ -107,6 +115,7 @@ export async function runMigrations(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_invoices_paypal ON invoices(paypal_invoice_id);
     CREATE INDEX IF NOT EXISTS idx_invoice_paypal_ids_inv ON invoice_paypal_ids(invoice_id);
     CREATE INDEX IF NOT EXISTS idx_invoice_paypal_ids_pp ON invoice_paypal_ids(paypal_invoice_id);
+    CREATE INDEX IF NOT EXISTS idx_invoice_paypal_ids_num ON invoice_paypal_ids(paypal_invoice_number);
     CREATE INDEX IF NOT EXISTS idx_audit_events_ts ON audit_events(ts DESC);
     CREATE INDEX IF NOT EXISTS idx_actions_invoice ON action_records(invoice_id);
   `);

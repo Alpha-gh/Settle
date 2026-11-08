@@ -1,4 +1,9 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import fastifyStatic from '@fastify/static';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import cors from '@fastify/cors';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -11,7 +16,7 @@ import {
   type PayPalPort,
   evaluatePolicy,
 } from '@settle/shared';
-import { getEnv } from './config/env.js';
+import { getEnv, findRepoRoot } from './config/env.js';
 import {
   BusinessRepository,
   PayerRepository,
@@ -22,6 +27,7 @@ import {
   AuditEventRepository,
   InvoicePayPalIdRepository,
 } from './db/repositories.js';
+import { getRawSql } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
@@ -30,6 +36,7 @@ import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
 import { PayPalWebhookHandler } from './paypal/webhook.js';
 import { ActionService, NotProvisionedError } from './services/actions.js';
+import { PaymentReconciliationService } from './services/reconciliation.js';
 import {
   SimulateRequestBodySchema,
   ChatRequestBodySchema,
@@ -48,27 +55,70 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const env = getEnv();
 
   const app = Fastify({
+    bodyLimit: 1048576, // 1MB body limit (Item 4)
     logger: {
       level: env.NODE_ENV === 'test' ? 'warn' : 'info',
       redact: ['req.headers.authorization', 'req.headers.cookie'],
     },
   });
 
-  // CORS
+  // Security Headers (Item 4)
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  });
+
+  // Rate Limiting (Item 4: POST routes 60/min, generous on /api/demo/*)
+  await app.register(rateLimit, {
+    max: 60,
+    timeWindow: '1 minute',
+    allowList: (req) => {
+      if (req.method !== 'POST') return true;
+      if (req.url.startsWith('/api/demo')) return true;
+      if (env.NODE_ENV === 'test' && req.headers['x-test-rate-limit'] !== 'true') {
+        return true;
+      }
+      return false;
+    },
+    errorResponseBuilder: (_req, context) => {
+      const err: any = new Error(`Rate limit exceeded, retry in ${context.after}`);
+      err.statusCode = 429;
+      err.code = 'RATE_LIMIT_EXCEEDED';
+      return err;
+    },
+  });
+
+  // CORS (Item 4)
   await app.register(cors, {
     origin: (origin, cb) => {
-      // allow requests with no origin (like mobile apps, curl, or same-origin)
       if (!origin) return cb(null, true);
-      if (origin === env.WEB_ORIGIN || origin.startsWith('http://localhost:')) {
+      if (origin === env.WEB_ORIGIN) return cb(null, true);
+      if (env.NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
         return cb(null, true);
       }
-      return cb(null, true);
+      return cb(new Error('Not allowed by CORS'), false);
     },
     credentials: true,
   });
 
-  // Global Error Handler formatting: { error: { code, message, details? } }
+  // Global Error Handler (Item 4: mask 500 stack traces in production)
   app.setErrorHandler((error: any, request, reply) => {
+    if (error?.statusCode === 429 || error?.code === 'RATE_LIMIT_EXCEEDED' || error?.code === 'FST_ERR_RATE_LIMIT_EXCEEDED') {
+      return reply.status(429).send({
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: error.message || 'Rate limit exceeded, retry later',
+        },
+      });
+    }
+
     let statusCode = 500;
     let code = 'INTERNAL_ERROR';
     let message = error?.message || 'An unexpected error occurred';
@@ -83,9 +133,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       statusCode = 409;
       code = 'NOT_PROVISIONED';
       message = error.message || 'Invoice is not provisioned in PayPal';
-    } else if (error?.statusCode) {
+    } else if (error?.statusCode && error.statusCode < 500) {
       statusCode = error.statusCode;
       code = error.code || 'HTTP_ERROR';
+      message = error.message;
+      details = error.details;
+    } else {
+      statusCode = error?.statusCode || 500;
+      code = 'INTERNAL_ERROR';
+      if (env.NODE_ENV === 'production') {
+        message = 'Internal server error';
+        details = undefined;
+      } else {
+        message = error?.message || 'An unexpected error occurred';
+        details = error?.stack;
+      }
     }
 
     reply.status(statusCode).send({
@@ -97,8 +159,64 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
   });
 
-  // 404 Handler
+  // Static Hosting & SPA Fallback (Item 3)
+  const candidateWebPaths = [
+    resolve(findRepoRoot(), 'apps/web/dist'),
+    resolve(process.cwd(), 'apps/web/dist'),
+    resolve(process.cwd(), '../web/dist'),
+    resolve(process.cwd(), '../../apps/web/dist'),
+  ];
+  const webDistPath = candidateWebPaths.find((p) => existsSync(p) && existsSync(resolve(p, 'index.html')));
+
+  if (webDistPath) {
+    await app.register(fastifyStatic, {
+      root: webDistPath,
+      prefix: '/',
+      wildcard: false,
+    });
+  }
+
+  // Root landing page (serve SPA index if available, otherwise friendly HTML landing page)
+  app.get('/', async (request, reply) => {
+    if (webDistPath && existsSync(resolve(webDistPath, 'index.html'))) {
+      return reply.sendFile('index.html');
+    }
+    return reply.type('text/html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settle Core API</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    .card { background: #1e293b; padding: 2.5rem; border-radius: 1rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); max-width: 480px; width: 100%; text-align: center; border: 1px solid #334155; }
+    h1 { margin-top: 0; color: #38bdf8; font-size: 1.8rem; }
+    p { color: #94a3b8; line-height: 1.6; }
+    .links { margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: center; }
+    a { display: inline-block; padding: 0.6rem 1.2rem; background: #0284c7; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: 500; transition: background 0.2s; }
+    a:hover { background: #0369a1; }
+    .badge { display: inline-block; background: #10b981; color: #022c22; font-size: 0.8rem; font-weight: bold; padding: 0.2rem 0.6rem; border-radius: 9999px; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">API ACTIVE</span>
+    <h1>Settle Core API</h1>
+    <p>The autonomous cashflow recovery platform API is up and running.</p>
+    <div class="links">
+      <a href="/health">Health Check</a>
+      <a href="/api/dashboard">Dashboard API</a>
+    </div>
+  </div>
+</body>
+</html>`);
+  });
+
+  // 404 Handler with SPA fallback
   app.setNotFoundHandler((request, reply) => {
+    if (webDistPath && request.method === 'GET' && !request.url.startsWith('/api') && !request.url.startsWith('/health')) {
+      return reply.sendFile('index.html');
+    }
     reply.status(404).send({
       error: {
         code: 'NOT_FOUND',
@@ -124,8 +242,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       clientId: env.PAYPAL_CLIENT_ID,
       clientSecret: env.PAYPAL_CLIENT_SECRET,
       baseUrl: env.PAYPAL_BASE_URL,
+      useNumberSuffix: env.PAYPAL_NUMBER_SUFFIX,
       historyRepo,
     });
+
+  const reconcileService = new PaymentReconciliationService(paypalClient);
 
   const actionService = new ActionService(
     actionRepo,
@@ -137,7 +258,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     paypalClient,
   );
 
-  const webhookHandler = new PayPalWebhookHandler(paypalClient as any, app.log);
+  const webhookHandler = new PayPalWebhookHandler(paypalClient as any, app.log, reconcileService);
 
   // Helper to construct current snapshot from DB
   async function getCurrentSnapshot(): Promise<Snapshot> {
@@ -162,8 +283,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // ── Routes ──────────────────────────────────────────────────────────────
 
-  // Health check
-  app.get('/health', async () => ({ status: 'ok' }));
+  // Health check with Postgres connectivity check (Item 4)
+  app.get('/health', async (request, reply) => {
+    try {
+      const sql = getRawSql();
+      await sql`SELECT 1`;
+      return { status: 'ok', database: 'connected' };
+    } catch (err: any) {
+      app.log.error({ err }, 'Health check database query failed');
+      return reply.status(503).send({
+        status: 'error',
+        database: 'disconnected',
+        error: {
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Database unavailable',
+        },
+      });
+    }
+  });
 
   // 1. Dashboard
   app.get('/api/dashboard', async (request, reply) => {
@@ -492,7 +629,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           payUrl: res.payUrl,
         });
 
-        await historyRepo.record(inv.id, res.paypalInvoiceId, 'initial_provisioning');
+        const paypalInvoiceNumber = (res as any).paypalInvoiceNumber;
+        await historyRepo.record(inv.id, res.paypalInvoiceId, 'initial_provisioning', paypalInvoiceNumber);
 
         const auditTrail = typeof (paypalClient as any).getAuditTrail === 'function'
           ? (paypalClient as any).getAuditTrail()
@@ -504,11 +642,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           ts: new Date().toISOString(),
           actor: 'paypal',
           kind: 'invoice.provisioned',
-          summary: `Invoice ${inv.number} provisioned in PayPal as ${res.paypalInvoiceId}`,
+          summary: `Invoice ${inv.number} provisioned in PayPal as ${res.paypalInvoiceId}${paypalInvoiceNumber ? ` (${paypalInvoiceNumber})` : ''}`,
           invoiceId: inv.id,
           paypalRequestId: lastAudit?.paypalRequestId,
           detail: {
             paypalInvoiceId: res.paypalInvoiceId,
+            paypalInvoiceNumber,
             payUrl: res.payUrl,
             recipientEmail: effectivePayer.email,
           },
@@ -525,7 +664,28 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (err: any) {
         failed++;
-        failures.push({ invoiceId: inv.id, error: err?.message || String(err) });
+        const failureItem: any = {
+          invoiceId: inv.id,
+          invoiceNumber: inv.number,
+          error: err?.message || String(err),
+        };
+        if (err?.name === 'PayPalError' || err?.paypalName || err?.debug_id || err?.debugId) {
+          failureItem.name = err.paypalName || err.name;
+          failureItem.debug_id = err.debug_id || err.debugId;
+          failureItem.issues = err.issues;
+          failureItem.details = err.details;
+        }
+        app.log.error({
+          msg: `Failed to provision PayPal invoice for ${inv.number}`,
+          invoiceId: inv.id,
+          invoiceNumber: inv.number,
+          error: failureItem.error,
+          paypalName: failureItem.name,
+          debug_id: failureItem.debug_id,
+          issues: failureItem.issues,
+          details: failureItem.details,
+        });
+        failures.push(failureItem);
       }
     }
 
@@ -570,51 +730,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       );
     }
 
-    // Immediately reconcile with getInvoice; never wait for webhooks
-    const reconciled = await paypalClient.getInvoice(invoice.paypalInvoiceId);
-
-    const updated = await invoiceRepo.update(invoice.id, {
-      status: reconciled.status,
-      amountPaid: reconciled.amountPaid,
-    });
-
-    const payAudit: AuditEvent = {
-      id: randomUUID(),
-      ts: new Date().toISOString(),
-      actor: 'paypal',
-      kind: 'invoice.paid',
-      summary: `Payment of $${(paymentAmount / 100).toFixed(2)} recorded for invoice ${invoice.number} (status: ${reconciled.status})`,
+    // Immediately reconcile via single shared reconciliation path
+    const result = await reconcileService.reconcileInvoicePayment({
       invoiceId: invoice.id,
+      paypalInvoiceId: invoice.paypalInvoiceId,
+      actor: 'paypal',
+      eventType: 'invoice.paid',
       paypalRequestId: paymentResult?.paypalRequestId,
-      detail: {
+      extraDetail: {
         paymentAmount,
-        reconciledStatus: reconciled.status,
-        reconciledAmountPaid: reconciled.amountPaid,
+        paymentId: paymentResult?.paymentId,
+        simulated: true,
       },
-    };
-    await auditRepo.append(payAudit);
-    eventBus.emitEvent({ type: 'audit.appended', payload: payAudit });
-
-    if (updated) {
-      eventBus.emitEvent({ type: 'invoice.updated', payload: updated });
-    }
-
-    // Recompute forecast & broadcast updated event
-    const snapshot = await getCurrentSnapshot();
-    const engine = await getEngine();
-    const receipts = engine.expectedReceipts(snapshot.invoices, snapshot.payers, snapshot.business.asOf);
-    const forecast = engine.forecast({
-      business: snapshot.business,
-      obligations: snapshot.obligations,
-      receipts,
-      horizonDays: 30,
     });
-    eventBus.emitEvent({ type: 'forecast.updated', payload: forecast });
 
     return {
       status: 'ok',
-      invoice: updated,
-      forecast,
+      invoice: result.invoice,
+      forecast: result.forecast,
+      delta: result.delta,
+      newCashBalance: result.newBalance,
     };
   });
 

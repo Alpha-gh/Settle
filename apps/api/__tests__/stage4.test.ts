@@ -11,6 +11,11 @@ import type {
   ActionRecord,
 } from '@settle/shared';
 import { buildApp } from '../src/app.js';
+import { PayPalClient } from '../src/paypal/client.js';
+import { resetCachedEnv } from '../src/config/env.js';
+import { getDb } from '../src/db/index.js';
+import { invoicePayPalIds } from '../src/db/schema.js';
+import { isNotNull } from 'drizzle-orm';
 import { setupTestDatabase } from '../src/db/test-db.js';
 import { closeDb } from '../src/db/index.js';
 import {
@@ -44,9 +49,12 @@ class FakePayPal implements PayPalPort {
     this.createdInvoices.push({ inv, payer });
     this.auditTrail.push({ paypalRequestId: reqId, httpStatus: 201, operation: 'createAndSendInvoice' });
 
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+    const paypalInvoiceNumber = `${inv.number || 'INV'}-${suffix}`;
     return {
       paypalInvoiceId,
       payUrl: `https://www.sandbox.paypal.com/invoice/p/#${paypalInvoiceId}`,
+      paypalInvoiceNumber,
     };
   }
 
@@ -74,7 +82,16 @@ class FakePayPal implements PayPalPort {
     this.auditTrail.push({ paypalRequestId: reqId, httpStatus: 200, operation: 'cancelInvoice' });
   }
 
+  public customStates: Map<string, { status: InvoiceStatus; amountPaid: Cents }> = new Map();
+
+  public setInvoiceState(paypalInvoiceId: string, status: InvoiceStatus, amountPaid: Cents) {
+    this.customStates.set(paypalInvoiceId, { status, amountPaid });
+  }
+
   async getInvoice(paypalInvoiceId: string): Promise<{ status: InvoiceStatus; amountPaid: Cents }> {
+    if (this.customStates.has(paypalInvoiceId)) {
+      return this.customStates.get(paypalInvoiceId)!;
+    }
     const payments = this.recordedPayments.filter((p) => p.paypalInvoiceId === paypalInvoiceId);
     const totalPaid = payments.reduce((acc, p) => acc + p.amount, 0);
     return {
@@ -475,4 +492,350 @@ describe('Stage 4 - Core System 1 Integration & FakePayPal Tests', () => {
     expect(simJson.scenario).toBeDefined();
     expect(simJson.baseline).toBeDefined();
   });
+
+  it('11. PayPalClient: duplicate number on first try then success on retry', async () => {
+    let draftAttempts = 0;
+    const recordedInvoiceNumbers: string[] = [];
+
+    const mockFetch: typeof fetch = async (url, init) => {
+      const urlStr = String(url);
+      if (urlStr.endsWith('/v1/oauth2/token')) {
+        return new Response(JSON.stringify({ access_token: 'mock_token', expires_in: 3600 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (urlStr.endsWith('/v2/invoicing/invoices')) {
+        draftAttempts++;
+        const body = JSON.parse(String(init?.body));
+        recordedInvoiceNumbers.push(body.detail.invoice_number);
+
+        if (draftAttempts === 1) {
+          return new Response(
+            JSON.stringify({
+              name: 'UNPROCESSABLE_ENTITY',
+              message: 'The requested action could not be performed, semantically incorrect, or failed business validation.',
+              debug_id: 'dbg_dup_123',
+              details: [
+                {
+                  field: '/detail/invoice_number',
+                  value: body.detail.invoice_number,
+                  location: 'body',
+                  issue: 'DUPLICATE_INVOICE_NUMBER',
+                  description: 'Invoice number already exists',
+                },
+              ],
+            }),
+            {
+              status: 422,
+              headers: { 'Content-Type': 'application/json', 'paypal-debug-id': 'dbg_dup_123' },
+            },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: 'INV2-RETRY-SUCCESS-ID',
+            detail: { invoice_number: body.detail.invoice_number },
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (urlStr.includes('/send')) {
+        return new Response(
+          JSON.stringify({ href: 'https://www.sandbox.paypal.com/invoice/p/#INV2-RETRY-SUCCESS-ID' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    };
+
+    const client = new PayPalClient({
+      clientId: 'mock-client',
+      clientSecret: 'mock-secret',
+      fetchFn: mockFetch,
+      useNumberSuffix: true,
+    });
+
+    const inv: Invoice = {
+      id: 'inv_test_retry',
+      payerId: 'pyr_001',
+      number: 'INV-1001',
+      description: 'Test retry',
+      amount: 10000,
+      amountPaid: 0,
+      issueDate: '2026-10-01',
+      dueDate: '2026-10-15',
+      status: 'SENT',
+      discountPct: 0,
+      allowPartial: false,
+    };
+    const payer: Payer = {
+      id: 'pyr_001',
+      name: 'Acme Corp',
+      email: 'billing@acme.com',
+      paymentTermsDays: 30,
+      typicalDelayDays: 5,
+    };
+
+    const res = await client.createAndSendInvoice(inv, payer);
+    expect(draftAttempts).toBe(2);
+    expect(recordedInvoiceNumbers.length).toBe(2);
+    expect(recordedInvoiceNumbers[0]).not.toBe(recordedInvoiceNumbers[1]);
+    expect(recordedInvoiceNumbers[0]).toMatch(/^INV-1001-[0-9A-Z]{4}$/);
+    expect(recordedInvoiceNumbers[1]).toMatch(/^INV-1001-[0-9A-Z]{4}$/);
+    expect(res.paypalInvoiceId).toBe('INV2-RETRY-SUCCESS-ID');
+    expect(res.paypalInvoiceNumber).toBe(recordedInvoiceNumbers[1]);
+  });
+
+  it('12. Two consecutive reset-and-provision runs both create 12 invoices, preserving history', async () => {
+    // First reset & provision
+    const resetRes1 = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetRes1.statusCode).toBe(200);
+
+    const provRes1 = await app.inject({ method: 'POST', url: '/api/demo/provision-paypal' });
+    expect(provRes1.statusCode).toBe(200);
+    const provJson1 = JSON.parse(provRes1.payload);
+    expect(provJson1.provisioned).toBe(12);
+    expect(provJson1.failed).toBe(0);
+
+    const db = getDb();
+    const rows1 = await db.select().from(invoicePayPalIds);
+    const activeRows1 = rows1.filter((r) => r.replacedAt === null);
+    expect(activeRows1.length).toBe(12);
+
+    // Second reset & provision
+    const resetRes2 = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetRes2.statusCode).toBe(200);
+
+    // After reset, all previous rows are marked replaced with reason "demo reset", none are deleted
+    const rowsAfterReset = await db.select().from(invoicePayPalIds);
+    expect(rowsAfterReset.length).toBeGreaterThanOrEqual(12);
+    expect(rowsAfterReset.every((r) => r.replacedAt !== null)).toBe(true);
+
+    const provRes2 = await app.inject({ method: 'POST', url: '/api/demo/provision-paypal' });
+    expect(provRes2.statusCode).toBe(200);
+    const provJson2 = JSON.parse(provRes2.payload);
+    expect(provJson2.provisioned).toBe(12);
+    expect(provJson2.failed).toBe(0);
+
+    // Now 12 new active rows exist alongside the historical replaced rows
+    const rows2 = await db.select().from(invoicePayPalIds);
+    const activeRows2 = rows2.filter((r) => r.replacedAt === null);
+    const replacedRows2 = rows2.filter((r) => r.replacedAt !== null);
+    expect(activeRows2.length).toBe(12);
+    expect(replacedRows2.length).toBe(rowsAfterReset.length);
+  });
+
+  it('13. Old webhooks after reset are ignored as superseded and never alter new data', async () => {
+    process.env.WEBHOOK_VERIFY = 'false';
+    resetCachedEnv();
+
+    // Get an old replaced PayPal ID from the first run
+    const db = getDb();
+    const replaced = await db.select().from(invoicePayPalIds).where(isNotNull(invoicePayPalIds.replacedAt)).limit(1);
+    expect(replaced.length).toBe(1);
+    const oldPayPalInvoiceId = replaced[0].paypalInvoiceId;
+    const oldInvoiceId = replaced[0].invoiceId;
+
+    // Check current state of this invoice in the active DB
+    const activeInvBefore = (await invoiceRepo.getById(oldInvoiceId))!;
+    expect(activeInvBefore).toBeDefined();
+    expect(activeInvBefore.status).toBe('SENT');
+
+    // Send a CANCELLED webhook event for the old PayPal invoice ID
+    const cancelWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-OLD-CANCEL-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.CANCELLED',
+        resource: {
+          invoice: { id: oldPayPalInvoiceId },
+        },
+      },
+    });
+    expect(cancelWebhookRes.statusCode).toBe(200);
+    const cancelJson = JSON.parse(cancelWebhookRes.payload);
+    expect(cancelJson.handled).toBe(true);
+
+    // Verify active invoice was NOT marked CANCELLED
+    const activeInvAfterCancel = (await invoiceRepo.getById(oldInvoiceId))!;
+    expect(activeInvAfterCancel.status).toBe('SENT');
+
+    // Verify superseded audit event was recorded
+    const audits = await auditRepo.list(20);
+    const cancelAudit = audits.find(
+      (a) => a.kind === 'invoice.superseded_cancelled' && a.detail?.paypalInvoiceId === oldPayPalInvoiceId,
+    );
+    expect(cancelAudit).toBeDefined();
+
+    // Also send an UPDATED webhook event for the old PayPal invoice ID
+    const updateWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-OLD-UPDATE-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.UPDATED',
+        resource: {
+          invoice: { id: oldPayPalInvoiceId },
+        },
+      },
+    });
+    expect(updateWebhookRes.statusCode).toBe(200);
+    const updateJson = JSON.parse(updateWebhookRes.payload);
+    expect(updateJson.handled).toBe(true);
+
+    const updateAudit = (await auditRepo.list(20)).find(
+      (a) => a.kind === 'invoice.superseded_updated' && a.detail?.paypalInvoiceId === oldPayPalInvoiceId,
+    );
+    expect(updateAudit).toBeDefined();
+
+    // Active invoice still unchanged
+    const activeInvFinal = (await invoiceRepo.getById(oldInvoiceId))!;
+    expect(activeInvFinal.status).toBe('SENT');
+  });
+
+  it('14. Cash balance synchronization: payment, duplicate, partial, refund, and reset', async () => {
+    process.env.WEBHOOK_VERIFY = 'false';
+    resetCachedEnv();
+
+    // 1. Reset demo data to baseline
+    const resetRes = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetRes.statusCode).toBe(200);
+
+    const initialDashRes = await app.inject({ method: 'GET', url: '/api/dashboard' });
+    const initialDash = JSON.parse(initialDashRes.payload);
+    expect(initialDash.business.startingBalance).toBe(980000);
+    expect(initialDash.kpis.cash).toBe(980000);
+    expect(initialDash.kpis.shortfall).toBe(200000);
+
+    // 2. Provision invoices in PayPal
+    const provRes = await app.inject({ method: 'POST', url: '/api/demo/provision-paypal' });
+    expect(provRes.statusCode).toBe(200);
+
+    const inv1 = (await invoiceRepo.getById('inv_001'))!;
+    expect(inv1.amount).toBe(350000);
+    expect(inv1.amountPaid).toBe(0);
+    expect(inv1.paypalInvoiceId).toBeDefined();
+
+    // 3. Paying inv_001 in full sets cash to 1,330,000, shortfall 0 and firstBreachDate null
+    const payRes = await app.inject({
+      method: 'POST',
+      url: '/api/demo/simulate-payment',
+      payload: { invoiceId: 'inv_001' },
+    });
+    expect(payRes.statusCode).toBe(200);
+    const payJson = JSON.parse(payRes.payload);
+    expect(payJson.status).toBe('ok');
+    expect(payJson.invoice.status).toBe('PAID');
+    expect(payJson.invoice.amountPaid).toBe(350000);
+    expect(payJson.forecast.shortfall).toBe(0);
+    expect(payJson.forecast.firstBreachDate).toBeNull();
+
+    // Verify stored business startingBalance and dashboard
+    const dashAfterPayRes = await app.inject({ method: 'GET', url: '/api/dashboard' });
+    const dashAfterPay = JSON.parse(dashAfterPayRes.payload);
+    expect(dashAfterPay.business.startingBalance).toBe(1330000);
+    expect(dashAfterPay.kpis.cash).toBe(1330000);
+    expect(dashAfterPay.kpis.shortfall).toBe(0);
+    expect(dashAfterPay.forecast.shortfall).toBe(0);
+    expect(dashAfterPay.forecast.firstBreachDate).toBeNull();
+
+    // Verify audit event stating amount received and new cash balance
+    const audits = await auditRepo.list(20);
+    const payAudit = audits.find(
+      (a) => a.invoiceId === 'inv_001' && (a.kind === 'invoice.paid' || a.kind === 'INVOICING.INVOICE.PAID'),
+    );
+    expect(payAudit).toBeDefined();
+    expect(payAudit?.summary).toMatch(/3,?500\.00/);
+    expect(payAudit?.summary).toMatch(/13,?300\.00/);
+    expect(payAudit?.detail?.newCashBalance).toBe(1330000);
+
+    // 4. Duplicate webhook or second reconcile adds nothing
+    const dupWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-DUP-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.PAID',
+        resource: {
+          invoice: { id: inv1.paypalInvoiceId },
+        },
+      },
+    });
+    expect(dupWebhookRes.statusCode).toBe(200);
+
+    const dashAfterDup = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashAfterDup.business.startingBalance).toBe(1330000);
+    expect(dashAfterDup.kpis.cash).toBe(1330000);
+
+    // 5. Partial payment adds only the delta
+    const inv2 = (await invoiceRepo.getById('inv_002'))!;
+    expect(inv2.paypalInvoiceId).toBeDefined();
+    expect(inv2.amountPaid).toBe(0);
+
+    // First partial payment of 50,000 cents
+    const partPayRes1 = await app.inject({
+      method: 'POST',
+      url: '/api/demo/simulate-payment',
+      payload: { invoiceId: 'inv_002', amount: 50000 },
+    });
+    expect(partPayRes1.statusCode).toBe(200);
+
+    const dashAfterPart1 = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashAfterPart1.business.startingBalance).toBe(1380000);
+    expect(dashAfterPart1.kpis.cash).toBe(1380000);
+
+    // Second partial payment of 30,000 cents (cumulative 80,000 cents, delta = +30,000)
+    const partPayRes2 = await app.inject({
+      method: 'POST',
+      url: '/api/demo/simulate-payment',
+      payload: { invoiceId: 'inv_002', amount: 30000 },
+    });
+    expect(partPayRes2.statusCode).toBe(200);
+
+    const dashAfterPart2 = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashAfterPart2.business.startingBalance).toBe(1410000);
+    expect(dashAfterPart2.kpis.cash).toBe(1410000);
+
+    // 6. A refund subtracts
+    // Simulate PayPal refunding inv_002 back to 0
+    fakePayPal.setInvoiceState(inv2.paypalInvoiceId!, 'REFUNDED', 0);
+    const refundWebhookRes = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/paypal',
+      payload: {
+        id: `WH-REFUND-${randomUUID()}`,
+        event_type: 'INVOICING.INVOICE.REFUNDED',
+        resource: {
+          invoice: { id: inv2.paypalInvoiceId },
+        },
+      },
+    });
+    expect(refundWebhookRes.statusCode).toBe(200);
+
+    const dashAfterRefund = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    // 1,410,000 - 80,000 = 1,330,000
+    expect(dashAfterRefund.business.startingBalance).toBe(1330000);
+    expect(dashAfterRefund.kpis.cash).toBe(1330000);
+
+    const refundAudit = (await auditRepo.list(20)).find((a) => a.kind === 'INVOICING.INVOICE.REFUNDED');
+    expect(refundAudit).toBeDefined();
+    expect(refundAudit?.detail?.refundAmount).toBe(80000);
+    expect(refundAudit?.detail?.newCashBalance).toBe(1330000);
+
+    // 7. Reset restores 980,000
+    const resetResFinal = await app.inject({ method: 'POST', url: '/api/demo/reset' });
+    expect(resetResFinal.statusCode).toBe(200);
+
+    const dashFinal = JSON.parse((await app.inject({ method: 'GET', url: '/api/dashboard' })).payload);
+    expect(dashFinal.business.startingBalance).toBe(980000);
+    expect(dashFinal.kpis.cash).toBe(980000);
+    expect(dashFinal.kpis.shortfall).toBe(200000);
+  });
+
 });
