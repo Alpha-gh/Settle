@@ -60,6 +60,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     bodyLimit: 1048576, // 1MB body limit (Item 4)
     connectionTimeout: 120000, // 120s timeout (never shorter than 60s)
     requestTimeout: 120000, // 120s timeout (never shorter than 60s)
+    keepAliveTimeout: 65000, // 65s keepalive for upstream proxies
     logger: {
       level: env.NODE_ENV === 'test' ? 'warn' : 'info',
       redact: ['req.headers.authorization', 'req.headers.cookie'],
