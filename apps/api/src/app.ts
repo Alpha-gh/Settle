@@ -28,7 +28,7 @@ import {
   AuditEventRepository,
   InvoicePayPalIdRepository,
 } from './db/repositories.js';
-import { getRawSql } from './db/index.js';
+import { getRawSql, getDb } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
@@ -37,7 +37,9 @@ import { StubAgent } from './adapters/stubs.js';
 import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
 import { PayPalWebhookHandler } from './paypal/webhook.js';
-import { ActionService, NotProvisionedError } from './services/actions.js';
+import { ActionService, NotProvisionedError, ActionNotOpenError } from './services/actions.js';
+import { and, eq, inArray } from 'drizzle-orm';
+import { actionRecords, auditEvents } from './db/schema.js';
 import { PaymentReconciliationService } from './services/reconciliation.js';
 import {
   SimulateRequestBodySchema,
@@ -134,7 +136,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       code = 'VALIDATION_ERROR';
       message = 'Request validation failed';
       details = error.errors;
-    } else if (error instanceof NotProvisionedError || error?.statusCode === 409 || error?.code === 'NOT_PROVISIONED') {
+    } else if (error instanceof ActionNotOpenError || error?.code === 'ACTION_NOT_OPEN') {
+      statusCode = 409;
+      code = 'ACTION_NOT_OPEN';
+      message = error.message || 'Action is not open for approval';
+    } else if (error?.code === 'AGENT_RUN_IN_PROGRESS') {
+      statusCode = 409;
+      code = 'AGENT_RUN_IN_PROGRESS';
+      message = error.message || 'An agent run is currently in progress';
+    } else if (error instanceof NotProvisionedError || error?.code === 'NOT_PROVISIONED') {
       statusCode = 409;
       code = 'NOT_PROVISIONED';
       message = error.message || 'Invoice is not provisioned in PayPal';
@@ -456,26 +466,147 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         action.status = 'APPROVED';
         action.decidedBy = 'auto';
       }
+    }
 
-      const existing = await actionRepo.getById(action.id);
-      if (existing) {
-        await actionRepo.update(action);
-      } else {
-        await actionRepo.insert(action);
+    // ── Item 1: Supersede older open actions in one database transaction per run ──
+    const db = getDb();
+    const runInvoiceIds = Array.from(new Set(result.actions.map((a) => a.invoiceId)));
+    const newActionIds = new Set(result.actions.map((a) => a.id));
+    const supersededItems: { audit: AuditEvent; action: ActionRecord }[] = [];
+
+    await db.transaction(async (tx) => {
+      if (runInvoiceIds.length > 0) {
+        const olderOpenActions = await tx
+          .select()
+          .from(actionRecords)
+          .where(
+            and(
+              inArray(actionRecords.invoiceId, runInvoiceIds),
+              inArray(actionRecords.status, ['PROPOSED', 'AWAITING_APPROVAL', 'BLOCKED', 'APPROVED']),
+            ),
+          );
+
+        for (const oldAction of olderOpenActions) {
+          if (newActionIds.has(oldAction.id)) {
+            continue;
+          }
+
+          const supersededReason = oldAction.reason.endsWith('Superseded by a newer agent run')
+            ? oldAction.reason
+            : `${oldAction.reason} - Superseded by a newer agent run`;
+
+          await tx
+            .update(actionRecords)
+            .set({
+              status: 'REJECTED',
+              decidedBy: 'auto',
+              reason: supersededReason,
+            })
+            .where(eq(actionRecords.id, oldAction.id));
+
+          const supersededAudit: AuditEvent = {
+            id: randomUUID(),
+            ts: new Date().toISOString(),
+            actor: 'system',
+            kind: 'action.superseded',
+            summary: `Action ${oldAction.id} (${oldAction.type}) for invoice ${oldAction.invoiceId} superseded by a newer agent run`,
+            invoiceId: oldAction.invoiceId,
+            actionId: oldAction.id,
+            detail: {
+              previousStatus: oldAction.status,
+              reason: 'Superseded by a newer agent run',
+            },
+          };
+
+          await tx.insert(auditEvents).values({
+            id: supersededAudit.id,
+            ts: supersededAudit.ts,
+            actor: supersededAudit.actor,
+            kind: supersededAudit.kind,
+            summary: supersededAudit.summary,
+            invoiceId: supersededAudit.invoiceId,
+            actionId: supersededAudit.actionId,
+            detail: supersededAudit.detail,
+          });
+
+          supersededItems.push({
+            audit: supersededAudit,
+            action: {
+              ...(oldAction as any),
+              status: 'REJECTED',
+              decidedBy: 'auto',
+              reason: supersededReason,
+            },
+          });
+        }
       }
-      eventBus.emitEvent({ type: 'action.updated', payload: action });
 
-      // Auto-execute allowed-without-approval actions
+      for (const action of result.actions) {
+        await tx
+          .insert(actionRecords)
+          .values({
+            id: action.id,
+            invoiceId: action.invoiceId,
+            type: action.type,
+            params: action.params,
+            reason: action.reason,
+            simulation: action.simulation,
+            policy: action.policy,
+            status: action.status,
+            createdAt: action.createdAt,
+            decidedBy: action.decidedBy,
+            executedAt: action.executedAt,
+            paypalRequestId: action.paypalRequestId,
+            error: action.error,
+          })
+          .onConflictDoUpdate({
+            target: actionRecords.id,
+            set: {
+              type: action.type,
+              params: action.params,
+              reason: action.reason,
+              simulation: action.simulation,
+              policy: action.policy,
+              status: action.status,
+              createdAt: action.createdAt,
+              decidedBy: action.decidedBy,
+              executedAt: action.executedAt,
+              paypalRequestId: action.paypalRequestId,
+              error: action.error,
+            },
+          });
+      }
+    });
+
+    for (const item of supersededItems) {
+      eventBus.emitEvent({ type: 'audit.appended', payload: item.audit });
+      eventBus.emitEvent({ type: 'action.updated', payload: item.action });
+    }
+    for (const action of result.actions) {
+      eventBus.emitEvent({ type: 'action.updated', payload: action });
+    }
+
+    // Auto-execute allowed-without-approval actions
+    for (const action of result.actions) {
+      const invoice = snapshot.invoices.find((i) => i.id === action.invoiceId);
       if (action.status === 'APPROVED' && action.decidedBy === 'auto') {
         const requiresPayPal = ['REMIND', 'OFFER_DISCOUNT', 'OFFER_INSTALMENTS'].includes(action.type);
-        if (requiresPayPal && !invoice.paypalInvoiceId) {
+        if (requiresPayPal && (!invoice || !invoice.paypalInvoiceId)) {
           action.status = 'AWAITING_APPROVAL';
           action.decidedBy = undefined;
           await actionRepo.update(action);
           processedActions.push(action);
         } else {
-          const executed = await actionService.executeAction(action.id, 'auto');
-          processedActions.push(executed);
+          try {
+            const executed = await actionService.executeAction(action.id, 'auto');
+            processedActions.push(executed);
+          } catch (autoErr: any) {
+            request.log.error({ autoErr, actionId: action.id }, 'Auto-execution of action failed');
+            action.status = 'FAILED';
+            action.error = autoErr?.message || String(autoErr);
+            await actionRepo.update(action);
+            processedActions.push(action);
+          }
         }
       } else {
         processedActions.push(action);
@@ -500,6 +631,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!record) {
       return reply.status(404).send({
         error: { code: 'NOT_FOUND', message: `ActionRecord ${id} not found` },
+      });
+    }
+
+    if (record.status === 'REJECTED' || record.status === 'FAILED') {
+      return reply.status(409).send({
+        error: {
+          code: 'ACTION_NOT_OPEN',
+          message: `Action ${id} is closed (${record.status}) and cannot be approved`,
+        },
       });
     }
 

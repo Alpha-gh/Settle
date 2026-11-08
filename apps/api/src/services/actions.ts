@@ -31,6 +31,16 @@ export class NotProvisionedError extends Error {
   }
 }
 
+export class ActionNotOpenError extends Error {
+  public readonly statusCode = 409;
+  public readonly code = 'ACTION_NOT_OPEN';
+
+  constructor(message = 'Action is not open for approval') {
+    super(message);
+    this.name = 'ActionNotOpenError';
+  }
+}
+
 // In-memory per-action locks so concurrent approvals execute once
 const actionExecutionLocks = new Map<string, Promise<ActionRecord>>();
 
@@ -107,6 +117,11 @@ export class ActionService {
     // Idempotent: if already EXECUTED, return record
     if (action.status === 'EXECUTED') {
       return action;
+    }
+
+    // Closed action guard: an approve call on a closed action must never execute anything
+    if (action.status === 'REJECTED' || action.status === 'FAILED') {
+      throw new ActionNotOpenError(`Action ${actionId} is not open for approval (status: ${action.status})`);
     }
 
     const invoice = await this.invoiceRepo.getById(action.invoiceId);
