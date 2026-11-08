@@ -4,6 +4,7 @@ import { getEngine } from './engine.js';
 import { StubAgent } from './stubs.js';
 
 let agentInstance: AgentPort | null = null;
+let agentRunInProgress = false;
 
 export function resetAgentInstance(): void {
   agentInstance = null;
@@ -11,6 +12,22 @@ export function resetAgentInstance(): void {
 
 export function setAgentInstance(agent: AgentPort | null): void {
   agentInstance = agent;
+}
+
+export function acquireAgentRunLock(): boolean {
+  if (agentRunInProgress) {
+    return false;
+  }
+  agentRunInProgress = true;
+  return true;
+}
+
+export function releaseAgentRunLock(): void {
+  agentRunInProgress = false;
+}
+
+export function resetAgentRunLock(): void {
+  agentRunInProgress = false;
 }
 
 export interface Clock {

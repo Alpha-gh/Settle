@@ -32,7 +32,7 @@ import { getRawSql, getDb } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
-import { getAgent } from './adapters/agent.js';
+import { getAgent, acquireAgentRunLock, releaseAgentRunLock } from './adapters/agent.js';
 import { StubAgent } from './adapters/stubs.js';
 import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
@@ -357,22 +357,32 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 3. Agent Run Cycle
   app.post('/api/agent/run', async (request, reply) => {
-    const body = AgentRunRequestBodySchema?.parse(request.body || {});
-    const targetInvoiceId = body?.invoiceId;
-
-    if (targetInvoiceId) {
-      const inv = await invoiceRepo.getById(targetInvoiceId);
-      if (!inv) {
-        return reply.status(404).send({
-          error: { code: 'NOT_FOUND', message: `Invoice ${targetInvoiceId} not found` },
-        });
-      }
-      if (!inv.paypalInvoiceId) {
-        return reply.status(409).send({
-          error: { code: 'NOT_PROVISIONED', message: 'Invoice is not provisioned in PayPal' },
-        });
-      }
+    if (!acquireAgentRunLock()) {
+      return reply.status(409).send({
+        error: {
+          code: 'AGENT_RUN_IN_PROGRESS',
+          message: 'An agent run is currently in progress',
+        },
+      });
     }
+
+    try {
+      const body = AgentRunRequestBodySchema?.parse(request.body || {});
+      const targetInvoiceId = body?.invoiceId;
+
+      if (targetInvoiceId) {
+        const inv = await invoiceRepo.getById(targetInvoiceId);
+        if (!inv) {
+          return reply.status(404).send({
+            error: { code: 'NOT_FOUND', message: `Invoice ${targetInvoiceId} not found` },
+          });
+        }
+        if (!inv.paypalInvoiceId) {
+          return reply.status(409).send({
+            error: { code: 'NOT_PROVISIONED', message: 'Invoice is not provisioned in PayPal' },
+          });
+        }
+      }
 
     const snapshot = await getCurrentSnapshot();
     let result: AgentRunResult;
@@ -613,8 +623,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
 
-    result.actions = processedActions;
-    return result;
+      result.actions = processedActions;
+      return result;
+    } finally {
+      releaseAgentRunLock();
+    }
   });
 
   // 4. Actions list
