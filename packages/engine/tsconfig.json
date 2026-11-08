@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "noUncheckedIndexedAccess": true,
+    "composite": true,
+    "paths": {
+      "@settle/shared": ["../shared/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*", "test-support/**/*", "scripts/**/*", "vitest.config.ts"],
+  "references": [
+    { "path": "../shared" }
+  ]
+}
+

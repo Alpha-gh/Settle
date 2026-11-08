@@ -27,7 +27,7 @@ services:
       - key: POLICY_IGNORE_QUIET_HOURS
         value: "true"
       - key: ENGINE_IMPL
-        value: stub
+        value: real
       - key: AGENT_IMPL
         value: stub
       - key: DEMO_TODAY

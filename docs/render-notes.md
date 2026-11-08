@@ -77,3 +77,20 @@ To receive live asynchronous payment notifications (`INVOICING.INVOICE.PAID`) wh
 
 > **Note on Sandbox Latency:** In PayPal Sandbox, webhooks are typically delivered between 15 and 90 seconds after payment completion. Settle's `POST /api/demo/simulate-payment` endpoint provides an instantaneous alternative for live demonstrations.
 
+---
+
+## 4. Cash Engine Integration & ENGINE_IMPL
+
+### Build & Packaging
+- The cash engine (`@settle/engine`) is built alongside `@settle/shared` and `@settle/api` during the Docker builder stage:
+  ```bash
+  pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/api build
+  ```
+- It emits clean CommonJS/ESM outputs to `packages/engine/dist/index.js` via `tsconfig.build.json`.
+- The production runner container copies `packages/engine/dist` and `packages/engine/package.json`, making `@settle/engine` resolve natively without dev dependencies.
+
+### Environment Configuration
+- **`ENGINE_IMPL=real` (default):** Dynamically loads `@settle/engine` via `createEngine()`, providing pure, deterministic integer-cents cash forecasting and counterfactual scenario simulations.
+- **`ENGINE_IMPL=stub` (fallback):** Reverts to `StubEngine` from `src/adapters/stubs.ts` if running in an isolated test harness without the engine package.
+
+

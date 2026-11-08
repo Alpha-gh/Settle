@@ -1,0 +1,2 @@
+# Force LF line endings for engine fixtures
+packages/engine/fixtures/*.json text eol=lf

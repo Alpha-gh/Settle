@@ -1,0 +1,456 @@
+{
+  "change": {
+    "type": "OFFER_DISCOUNT",
+    "invoiceId": "inv_002",
+    "discountPct": 3,
+    "newExpectedDate": "2026-11-05"
+  },
+  "baseline": {
+    "days": [
+      {
+        "date": "2026-11-02",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-03",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-04",
+        "receipts": 0,
+        "outflows": 200000,
+        "closing": 1000000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-05",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1000000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-06",
+        "receipts": 0,
+        "outflows": 1100000,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-07",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-08",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-09",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-10",
+        "receipts": 320000,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-11",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-12",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-13",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-14",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-15",
+        "receipts": 50000,
+        "outflows": 0,
+        "closing": 270000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-16",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 270000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-17",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 270000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-18",
+        "receipts": 60000,
+        "outflows": 0,
+        "closing": 330000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-19",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 330000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-20",
+        "receipts": 25000,
+        "outflows": 150000,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-21",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-22",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-23",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-24",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-25",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-26",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-27",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-28",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-29",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-30",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-12-01",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      }
+    ],
+    "lowest": {
+      "date": "2026-11-06",
+      "amount": -100000
+    },
+    "firstBreachDate": "2026-11-06",
+    "shortfall": 600000
+  },
+  "scenario": {
+    "days": [
+      {
+        "date": "2026-11-02",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-03",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-04",
+        "receipts": 0,
+        "outflows": 200000,
+        "closing": 1000000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-05",
+        "receipts": 310400,
+        "outflows": 0,
+        "closing": 1310400,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-06",
+        "receipts": 0,
+        "outflows": 1100000,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-07",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-08",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-09",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-10",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-11",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-12",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-13",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-14",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 210400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-15",
+        "receipts": 50000,
+        "outflows": 0,
+        "closing": 260400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-16",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 260400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-17",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 260400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-18",
+        "receipts": 60000,
+        "outflows": 0,
+        "closing": 320400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-19",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 320400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-20",
+        "receipts": 25000,
+        "outflows": 150000,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-21",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-22",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-23",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-24",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-25",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-26",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-27",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-28",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-29",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-30",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-12-01",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 195400,
+        "belowReserve": true
+      }
+    ],
+    "lowest": {
+      "date": "2026-11-20",
+      "amount": 195400
+    },
+    "firstBreachDate": "2026-11-06",
+    "shortfall": 304600
+  },
+  "lowestDelta": 295400,
+  "shortfallDelta": -295400,
+  "cashCost": 9600,
+  "closesGap": false,
+  "assumptions": [
+    "Receipt for invoice inv_002 was previously treated as expected on 2026-11-10.",
+    "Assumes the payer accepts a 3% discount and pays $3,104.00 on 2026-11-05."
+  ]
+}

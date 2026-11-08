@@ -1,0 +1,455 @@
+{
+  "change": {
+    "type": "REMIND",
+    "invoiceId": "inv_001",
+    "newExpectedDate": "2026-11-16"
+  },
+  "baseline": {
+    "days": [
+      {
+        "date": "2026-11-02",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-03",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-04",
+        "receipts": 0,
+        "outflows": 200000,
+        "closing": 1000000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-05",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1000000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-06",
+        "receipts": 0,
+        "outflows": 1100000,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-07",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-08",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-09",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-10",
+        "receipts": 320000,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-11",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-12",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-13",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-14",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-15",
+        "receipts": 50000,
+        "outflows": 0,
+        "closing": 270000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-16",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 270000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-17",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 270000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-18",
+        "receipts": 60000,
+        "outflows": 0,
+        "closing": 330000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-19",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 330000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-20",
+        "receipts": 25000,
+        "outflows": 150000,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-21",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-22",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-23",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-24",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-25",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-26",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-27",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-28",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-29",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-30",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-12-01",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 205000,
+        "belowReserve": true
+      }
+    ],
+    "lowest": {
+      "date": "2026-11-06",
+      "amount": -100000
+    },
+    "firstBreachDate": "2026-11-06",
+    "shortfall": 600000
+  },
+  "scenario": {
+    "days": [
+      {
+        "date": "2026-11-02",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-03",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1200000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-04",
+        "receipts": 0,
+        "outflows": 200000,
+        "closing": 1000000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-05",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 1000000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-06",
+        "receipts": 0,
+        "outflows": 1100000,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-07",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-08",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-09",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": -100000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-10",
+        "receipts": 320000,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-11",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-12",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-13",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-14",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 220000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-15",
+        "receipts": 50000,
+        "outflows": 0,
+        "closing": 270000,
+        "belowReserve": true
+      },
+      {
+        "date": "2026-11-16",
+        "receipts": 350000,
+        "outflows": 0,
+        "closing": 620000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-17",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 620000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-18",
+        "receipts": 60000,
+        "outflows": 0,
+        "closing": 680000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-19",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 680000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-20",
+        "receipts": 25000,
+        "outflows": 150000,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-21",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-22",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-23",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-24",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-25",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-26",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-27",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-28",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-29",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-11-30",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      },
+      {
+        "date": "2026-12-01",
+        "receipts": 0,
+        "outflows": 0,
+        "closing": 555000,
+        "belowReserve": false
+      }
+    ],
+    "lowest": {
+      "date": "2026-11-06",
+      "amount": -100000
+    },
+    "firstBreachDate": "2026-11-06",
+    "shortfall": 600000
+  },
+  "lowestDelta": 0,
+  "shortfallDelta": 0,
+  "cashCost": 0,
+  "closesGap": false,
+  "assumptions": [
+    "Receipt for invoice inv_001 was previously treated as uncertain on 2026-11-09.",
+    "Assumes the payer pays on 2026-11-16 after the reminder."
+  ]
+}
