@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "outDir": "dist",
+    "noUncheckedIndexedAccess": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@settle/shared": ["../shared/src/index.ts"],
+      "@settle/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src/**/*", "test-support/**/*", "__tests__/**/*", "tests/**/*", "scripts/**/*"]
+}
