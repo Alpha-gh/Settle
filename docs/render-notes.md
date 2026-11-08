@@ -79,15 +79,15 @@ To receive live asynchronous payment notifications (`INVOICING.INVOICE.PAID`) wh
 
 ---
 
-## 4. Cash Engine Integration & ENGINE_IMPL
+## 4. Cash Engine & AI Agent Integration in Docker
 
 ### Build & Packaging
-- The cash engine (`@settle/engine`) is built alongside `@settle/shared` and `@settle/api` during the Docker builder stage:
+- The cash engine (`@settle/engine`) and AI agent (`@settle/agent`) are built alongside `@settle/shared` and `@settle/api` during the Docker builder stage:
   ```bash
-  pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/api build
+  pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/agent build && pnpm --filter @settle/api build
   ```
-- It emits clean CommonJS/ESM outputs to `packages/engine/dist/index.js` via `tsconfig.build.json`.
-- The production runner container copies `packages/engine/dist` and `packages/engine/package.json`, making `@settle/engine` resolve natively without dev dependencies.
+- Both `@settle/engine` and `@settle/agent` emit clean CommonJS/ESM outputs to their respective `dist/` directories via `tsconfig.build.json`.
+- The production runner container copies `packages/engine/dist`, `packages/engine/package.json`, `packages/agent/dist`, and `packages/agent/package.json`, allowing them to resolve natively as workspace packages without dev dependencies.
 
 ### Production Install & `--ignore-scripts`
 - In Stage 2 (the production runner), `pnpm install --frozen-lockfile --prod --ignore-scripts` is executed with `--ignore-scripts`.
@@ -96,5 +96,59 @@ To receive live asynchronous payment notifications (`INVOICING.INVOICE.PAID`) wh
 ### Environment Configuration
 - **`ENGINE_IMPL=real` (default):** Dynamically loads `@settle/engine` via `createEngine()`, providing pure, deterministic integer-cents cash forecasting and counterfactual scenario simulations.
 - **`ENGINE_IMPL=stub` (fallback):** Reverts to `StubEngine` from `src/adapters/stubs.ts` if running in an isolated test harness without the engine package.
+
+---
+
+## 5. AI Agent Deployment & LLM Configuration
+
+### Defaults & Implementation Mode
+- **`AGENT_IMPL=real` (default):** Wires the real AI agent (`createAgent({ engine, llm, clock })`) from `@settle/agent`.
+- **`AGENT_IMPL=stub` (fallback):** Reverts to `StubAgent` from `src/adapters/stubs.ts`.
+- **`LLM_PROVIDER=gemini` (default):** Configures Google Gemini as the generative reasoning provider. Also supports `anthropic`, `openai`, or `mock`.
+- **`LLM_MODEL` (optional):** Model identifier override (defaults to provider recommendation, e.g. `gemini-1.5-flash`).
+
+### Demo Safety & Fallback Behavior
+- **`AGENT_FALLBACK_TO_STUB=true` (default):** If the LLM provider fails (due to quota limits, network timeout, rate limit, or invalid response) or if `@settle/agent` throws an error during `POST /api/agent/run` or `POST /api/chat`:
+  - An `agent.error` event is appended to the audit log.
+  - Pino logs full error diagnostics.
+  - The API seamlessly falls back to `StubAgent` for that request, ensuring live demos and UI presentations never crash with 500 errors.
+- If `AGENT_FALLBACK_TO_STUB=false`, the server returns HTTP 502 with `{ error: { code: "AGENT_FAILED", message } }`.
+- **Missing API Key Handling:** If `GEMINI_API_KEY` is not set, `@settle/agent` automatically routes calls to `MockLlm`, ensuring full out-of-the-box functionality without external dependencies.
+
+---
+
+## 6. Render Environment & Secret Configuration
+
+### Complete List of Render Environment Variables (`render.yaml`)
+
+| Variable | Type | Value / Default | Description |
+| :--- | :---: | :--- | :--- |
+| `NODE_ENV` | Plain | `production` | Production mode |
+| `HOST` | Plain | `0.0.0.0` | Bind address |
+| `PORT` | Plain | `3000` | Port assigned by Render |
+| `ENGINE_IMPL` | Plain | `real` | Use real deterministic forecast engine |
+| `AGENT_IMPL` | Plain | `real` | Use real AI agent backend |
+| `LLM_PROVIDER` | Plain | `gemini` | Generative LLM provider |
+| `AGENT_FALLBACK_TO_STUB` | Plain | `true` | Fallback to stub on runtime LLM errors |
+| `PAYPAL_BASE_URL` | Plain | `https://api-m.sandbox.paypal.com` | PayPal Sandbox endpoint |
+| `PAYPAL_NUMBER_SUFFIX` | Plain | `true` | Unique invoice number suffix for sandbox |
+| `WEBHOOK_VERIFY` | Plain | `true` | Cryptographic webhook signature verification |
+| `DATABASE_URL` | Secret / Linked | fromDatabase `settle-db` | Connection string to PostgreSQL |
+| `PAYPAL_CLIENT_ID` | Secret (`sync: false`) | User-supplied | PayPal developer OAuth client ID |
+| `PAYPAL_CLIENT_SECRET` | Secret (`sync: false`) | User-supplied | PayPal developer OAuth client secret |
+| `PAYPAL_WEBHOOK_ID` | Secret (`sync: false`) | User-supplied | PayPal registered webhook ID |
+| `PAYPAL_BUYER_EMAIL` | Secret (`sync: false`) | User-supplied | Personal sandbox buyer account |
+| `PAYPAL_BUYER_PASSWORD` | Secret (`sync: false`) | User-supplied | Personal sandbox buyer password |
+| `GEMINI_API_KEY` | Secret (`sync: false`) | User-supplied | Google Gemini API key (Google AI Studio) |
+| `ANTHROPIC_API_KEY` | Secret (`sync: false`) | User-supplied | Anthropic Claude API key (optional) |
+| `OPENAI_API_KEY` | Secret (`sync: false`) | User-supplied | OpenAI API key (optional) |
+
+### Setting Up a Free Gemini API Key on Render
+1. Visit **Google AI Studio** at [https://aistudio.google.com/](https://aistudio.google.com/).
+2. Sign in and click **Get API key** > **Create API key**.
+3. In the Render Dashboard, open the **settle-api** web service.
+4. Navigate to **Environment** > **Add Environment Variable**.
+5. Set Key: `GEMINI_API_KEY` and Value: `<your-api-key>`.
+6. Save changes; Render will redeploy automatically with active live LLM reasoning.
 
 
