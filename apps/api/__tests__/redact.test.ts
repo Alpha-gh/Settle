@@ -42,3 +42,4 @@ describe('redactSecrets utility', () => {
     expect(redactSecrets(clean)).toBe(clean);
   });
 });
+
