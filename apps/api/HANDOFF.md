@@ -211,6 +211,25 @@ The `@settle/agent` default provider is `gemini` using the Google Gemini API. A 
 
 > **Zero-Config Fallback:** If `GEMINI_API_KEY` is not provided, the system does not crash or fail. It automatically selects `MockLlm`, which returns rule-driven action proposals and keyword-grounded chat responses with tool calls to `get_forecast`.
 
+### Gemini Adapter & Schema Specifications (Render Hardening)
+1. **OpenAPI 3.0 Schema Subset (`response_schema`)**:
+   - Google Gemini's structured output mode enforces a strict OpenAPI 3.0 subset. Schemas generated with `$ref`, `definitions`, `$defs`, or `title`/`additionalProperties` fail with `GenerateContentRequest.generation_config.response_schema.required[0]: property is not defined`.
+   - The Gemini adapter runs all schemas through `sanitizeGeminiSchema` before dispatch:
+     - Inlines all `$ref` pointers directly into definition nodes and drops `definitions`/`$defs`.
+     - Strips keywords rejected by Gemini: `$schema`, `$id`, `title`, `additionalProperties`, `default`, `examples`, `unevaluatedProperties`, `patternProperties`.
+     - Converts `const` values into single-value `enum: [value]`.
+     - Converts `anyOf`/`oneOf` containing null into `nullable: true`.
+     - Verifies every item in `required` exists in `properties` at that exact level (prunes nonexistent required keys).
+2. **Thinking Models (`gemini-3.6-flash`, `gemini-2.0-flash-thinking`)**:
+   - Thinking models allocate tokens to reasoning traces before generating JSON. The adapter sets `maxOutputTokens: 8192` ($\ge 2048$) to ensure reasoning never starves JSON completion.
+   - For structured decision tasks, `thinkingConfig: { thinkingBudget: 0 }` is sent for models supporting it (configurable via `GEMINI_THINKING_BUDGET`), keeping temperature strictly 0.
+   - Response processing ignores parts marked with `thought: true` or `thoughtSignature`, isolating the structured JSON payload.
+3. **Strict Diagnostics & Excerpt Redaction**:
+   - If an HTTP 200 response contains truncated output (`finishReason: "MAX_TOKENS"`) or is blocked by safety (`finishReason: "SAFETY"`), the adapter raises an explicit error and logs the finishReason with a 200-character redacted excerpt.
+   - API keys and query parameters are redacted from all logs, error messages, and audit events.
+4. **Local Verification**:
+   - Run `pnpm --filter @settle/agent gemini:check` to execute live verification against Gemini with decision schemas when `GEMINI_API_KEY` is configured in `.env`.
+
 ---
 
 ## 7. Financial Contract & Downstream Expectations
