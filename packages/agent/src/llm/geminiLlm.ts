@@ -13,6 +13,7 @@ export interface GeminiLlmOptions {
   model?: string;
   timeoutMs?: number;
   fetchFn?: typeof fetch;
+  thinkingBudget?: number;
 }
 
 export function sanitizeGeminiSchema(raw: unknown): unknown {
@@ -55,12 +56,14 @@ export class GeminiLlm implements LlmPort {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly timeoutMs: number;
-  private readonly fetchFn: typeof fetch;
+  private readonly fetchFn?: typeof fetch;
+  public readonly thinkingBudget?: number;
 
   constructor(options: GeminiLlmOptions) {
     this.apiKey = options.apiKey;
     this.model =
       options.model ||
+      process.env.LLM_MODEL ||
       process.env.GEMINI_MODEL ||
       DEFAULT_GEMINI_MODEL;
     this.timeoutMs =
@@ -68,7 +71,22 @@ export class GeminiLlm implements LlmPort {
       (process.env.LLM_TIMEOUT_MS
         ? parseInt(process.env.LLM_TIMEOUT_MS, 10)
         : 15000);
-    this.fetchFn = options.fetchFn ?? fetch;
+    this.fetchFn = options.fetchFn;
+
+    const isThinking =
+      this.model.includes('thinking') ||
+      this.model.startsWith('gemini-2') ||
+      this.model.startsWith('gemini-3');
+
+    this.thinkingBudget =
+      options.thinkingBudget !== undefined
+        ? options.thinkingBudget
+        : process.env.GEMINI_THINKING_BUDGET !== undefined
+          ? parseInt(process.env.GEMINI_THINKING_BUDGET, 10)
+          : isThinking
+            ? 0
+            : undefined;
+
     this.info = {
       provider: 'gemini',
       model: this.model,
@@ -80,7 +98,8 @@ export class GeminiLlm implements LlmPort {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const res = await this.fetchFn(url, {
+      const fetchImpl = this.fetchFn || globalThis.fetch;
+      const res = await fetchImpl(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -128,14 +147,32 @@ export class GeminiLlm implements LlmPort {
       ],
       generationConfig: {
         temperature: 0,
+        maxOutputTokens: 8192,
         responseMimeType: 'application/json',
         responseSchema: sanitizedSchema,
+        ...(this.thinkingBudget !== undefined
+          ? { thinkingConfig: { thinkingBudget: this.thinkingBudget } }
+          : {}),
       },
     };
 
     const data = await this.postJson(endpoint, body);
     const candidate = data?.candidates?.[0];
-    const textPart = candidate?.content?.parts?.[0]?.text;
+    const parts = candidate?.content?.parts;
+
+    if (!parts || parts.length === 0) {
+      throw new LlmMalformedOutputError(
+        'Gemini response did not contain candidates[0].content.parts',
+      );
+    }
+
+    const nonThoughtParts = parts.filter(
+      (p: any) => !p.thought && typeof p.text === 'string',
+    );
+    const textPart =
+      nonThoughtParts.length > 0
+        ? nonThoughtParts.map((p: any) => p.text).join('')
+        : parts.find((p: any) => typeof p.text === 'string')?.text;
 
     if (!textPart) {
       throw new LlmMalformedOutputError(
@@ -203,7 +240,13 @@ export class GeminiLlm implements LlmPort {
       const body = {
         contents,
         tools: [{ functionDeclarations }],
-        generationConfig: { temperature: 0 },
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 8192,
+          ...(this.thinkingBudget !== undefined
+            ? { thinkingConfig: { thinkingBudget: this.thinkingBudget } }
+            : {}),
+        },
       };
 
       const data = await this.postJson(endpoint, body);
@@ -217,6 +260,9 @@ export class GeminiLlm implements LlmPort {
       let hadFunctionCall = false;
 
       for (const part of parts) {
+        if (part.thought) {
+          continue;
+        }
         if (part.functionCall) {
           hadFunctionCall = true;
           const fnName = part.functionCall.name;
