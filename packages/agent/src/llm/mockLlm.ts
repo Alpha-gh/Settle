@@ -110,9 +110,10 @@ export function extractCandidatesFromPrompt(userPrompt: string): {
   const candidateBlocks = userPrompt.split(/(?=(?:^|\n)\s*-\s*)/);
 
   for (const block of candidateBlocks) {
-    const idMatch = block.match(
-      /-\s*(?:Option\s*ID[:=\s"']*|candidate[:=\s"']*|option[:=\s"']*|id[:=\s"']*)?([a-zA-Z0-9_-]+)/i,
-    );
+    const idMatch =
+      block.match(/-\s*Option\s*ID:\s*([a-zA-Z0-9_-]+)/i) ||
+      block.match(/-\s*(?:candidate|option|id)[:=\s"']*([a-zA-Z0-9_-]+)/i) ||
+      block.match(/-\s*([a-zA-Z0-9_-]+):/);
 
     if (idMatch?.[1]) {
       const id = idMatch[1];
@@ -120,18 +121,16 @@ export function extractCandidatesFromPrompt(userPrompt: string): {
       const cashCostMatch = block.match(/cash\s*Cost[:=\s"']*(-?\d+)/i);
       const lowestDeltaMatch = block.match(/lowest\s*Delta[:=\s"']*(-?\d+)/i);
 
-      if (closesGapMatch || cashCostMatch || lowestDeltaMatch || id === 'escalate') {
-        candidates.push({
-          id,
-          closesGap: closesGapMatch
-            ? closesGapMatch[1]?.toLowerCase() === 'true'
-            : false,
-          cashCost: cashCostMatch?.[1] ? parseInt(cashCostMatch[1], 10) : 0,
-          lowestDelta: lowestDeltaMatch?.[1]
-            ? parseInt(lowestDeltaMatch[1], 10)
-            : 0,
-        });
-      }
+      candidates.push({
+        id,
+        closesGap: closesGapMatch
+          ? closesGapMatch[1]?.toLowerCase() === 'true'
+          : false,
+        cashCost: cashCostMatch?.[1] ? parseInt(cashCostMatch[1], 10) : 0,
+        lowestDelta: lowestDeltaMatch?.[1]
+          ? parseInt(lowestDeltaMatch[1], 10)
+          : 0,
+      });
     }
   }
 
@@ -278,14 +277,48 @@ export class MockLlm implements LlmPort {
     }
 
     const invoiceNumMatch = a.user.match(/(?:Invoice Number:\s*|Invoice:\s*)([A-Z0-9_-]+)/i);
-    const invLabel = invoiceNumMatch?.[1] ? ` for invoice ${invoiceNumMatch[1]}` : '';
+    let reason: string;
+    if (invoiceNumMatch) {
+      const invNumber = invoiceNumMatch[1];
+      const payerMatch = a.user.match(/Payer Name:\s*([^\n]+)/i);
+      const payerName = payerMatch?.[1]?.replace(/<\/?untrusted_data>/g, '').trim() ?? 'the client';
 
-    const deltaUsd = formatUsd(chosen.lowestDelta);
-    const costUsd = formatUsd(chosen.cashCost);
+      const remainingMatch = a.user.match(/(?:Remaining Balance:\s*|Remaining Amount:\s*)(\$[0-9,.]+)/i);
+      const remainingFormatted = remainingMatch?.[1] ?? '$1,000.00';
 
-    const reason = chosen.closesGap
-      ? `Selecting action${invLabel} to close the cashflow gap, yielding ${deltaUsd} in cash at a cost of ${costUsd}.`
-      : `Selecting action${invLabel} to improve cash balance by ${deltaUsd} at a cost of ${costUsd}.`;
+      const dueDateMatch = a.user.match(/Due Date:\s*(\d{4}-\d{2}-\d{2})/i);
+      const dueDate = dueDateMatch?.[1] ?? '2026-11-05';
+
+      // Check action type for chosen candidate in block
+      const chosenBlockRegex = new RegExp(`Option ID:\\s*${chosen.id}[\\s\\S]*?(?=(?:- Option ID:|$))`, 'i');
+      const chosenBlock = a.user.match(chosenBlockRegex)?.[0] ?? '';
+
+      reason = `Send a reminder to ${payerName} for invoice ${invNumber} (${remainingFormatted} due ${dueDate}) to prompt on-time settlement.`;
+
+      if (/early-payment discount/i.test(chosenBlock)) {
+        const pctMatch = chosenBlock.match(/Discount:\s*(\d+)%/i);
+        const pct = pctMatch?.[1] ?? '2';
+        const discountedMatch = chosenBlock.match(/Discounted Balance:\s*(\$[0-9,.]+)/i);
+        const discountedFormatted = discountedMatch?.[1] ?? remainingFormatted;
+        const expectedMatch = chosenBlock.match(/Expected Settlement Date:\s*(\d{4}-\d{2}-\d{2})/i);
+        const expectedDate = expectedMatch?.[1] ?? dueDate;
+        reason = `Offer a ${pct}% early-payment discount to ${payerName} on invoice ${invNumber} to accelerate ${discountedFormatted} due ${expectedDate}.`;
+      } else if (/instalments/i.test(chosenBlock)) {
+        const countMatch = chosenBlock.match(/Instalments:\s*(\d+)/i);
+        const count = countMatch?.[1] ?? '3';
+        const firstDateMatch = chosenBlock.match(/First Instalment Date:\s*(\d{4}-\d{2}-\d{2})/i);
+        const firstDate = firstDateMatch?.[1] ?? dueDate;
+        reason = `Split invoice ${invNumber} for ${payerName} into ${count} instalments to recover ${remainingFormatted} starting ${firstDate}.`;
+      } else if (/escalate/i.test(chosen.id)) {
+        reason = `Escalate invoice ${invNumber} (${remainingFormatted} due ${dueDate}) for ${payerName} to the owner for manual collection.`;
+      }
+    } else {
+      const deltaUsd = formatUsd(chosen.lowestDelta);
+      const costUsd = formatUsd(chosen.cashCost);
+      reason = chosen.closesGap
+        ? `Selecting action to close the cashflow gap, yielding ${deltaUsd} in cash at a cost of ${costUsd}.`
+        : `Selecting action to improve cash balance by ${deltaUsd} at a cost of ${costUsd}.`;
+    }
 
     if (hasStrictSchema) {
       const out: Record<string, unknown> = {};

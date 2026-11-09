@@ -267,6 +267,15 @@ export interface GroundingFactsInput {
   customAllowed?: string[];
 }
 
+const FORBIDDEN_WORDS = [
+  /\bopt_\w+/i,
+  /\bcents?\b/i,
+  /\blowestDelta\b/i,
+  /\bcashCost\b/i,
+  /\bclosesGap\b/i,
+  /selection\s+guidance/i,
+];
+
 /**
  * Builds the canonical allowed set of number/date tokens from verified facts.
  * Does not compute days-late.
@@ -313,7 +322,8 @@ export function buildAllowedSet(facts: GroundingFactsInput): Set<string> {
   // Invoice amounts
   addAmount(facts.invoice.amount);
   addAmount(facts.invoice.amountPaid);
-  addAmount(facts.invoice.amount - facts.invoice.amountPaid);
+  const remaining = facts.invoice.amount - facts.invoice.amountPaid;
+  addAmount(remaining);
   addAmount(facts.cashCost);
   addAmount(facts.lowestDelta);
   addAmount(facts.shortfallDelta);
@@ -333,12 +343,12 @@ export function buildAllowedSet(facts: GroundingFactsInput): Set<string> {
     }
   }
 
-  // Change-specific facts
+  // Change-specific facts and derived amounts
   if (facts.change) {
-    if ('newExpectedDate' in facts.change) {
+    if ('newExpectedDate' in facts.change && facts.change.newExpectedDate) {
       addDate(facts.change.newExpectedDate);
     }
-    if ('firstDate' in facts.change) {
+    if ('firstDate' in facts.change && facts.change.firstDate) {
       addDate(facts.change.firstDate);
     }
     if ('discountPct' in facts.change) {
@@ -346,11 +356,18 @@ export function buildAllowedSet(facts: GroundingFactsInput): Set<string> {
       allowed.add(`pct:${pct}`);
       allowed.add(`int:${pct}`);
       allowed.add(`num:${pct}`);
+      // Derive discounted amount and cost if not explicitly passed
+      const cost = facts.cashCost ?? Math.round((remaining * pct) / 100);
+      addAmount(cost);
+      addAmount(remaining - cost);
     }
     if ('count' in facts.change) {
       const count = facts.change.count;
       allowed.add(`int:${count}`);
       allowed.add(`num:${count}`);
+      if (count > 0) {
+        addAmount(Math.floor(remaining / count));
+      }
     }
     if ('spacingDays' in facts.change) {
       const spacing = facts.change.spacingDays;
@@ -377,6 +394,16 @@ export function checkGrounding(
 ): { ok: boolean; offenders: string[] } {
   const extracted = extractNumbers(text);
   const offenders: string[] = [];
+
+  // Check forbidden words/identifiers
+  for (const regex of FORBIDDEN_WORDS) {
+    const matches = text.match(new RegExp(regex.source, 'gi'));
+    if (matches) {
+      for (const m of matches) {
+        offenders.push(m);
+      }
+    }
+  }
 
   for (const token of extracted) {
     if (!allowed.has(token.canonical)) {
