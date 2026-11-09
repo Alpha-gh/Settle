@@ -19,7 +19,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "eval": "tsx scripts/eval.ts"
+    "eval": "tsx scripts/eval.ts",
+    "gemini:check": "tsx scripts/gemini-live-check.ts"
   },
   "dependencies": {
     "@settle/shared": "workspace:*",
