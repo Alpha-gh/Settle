@@ -30,7 +30,17 @@ async function runLiveCheck() {
   });
   console.log('Reset status:', resetRes.statusCode);
 
-  console.log('\n=== Step 4: First POST /api/agent/run ===');
+  console.log('\n=== Step 4: POST /api/demo/provision-paypal ===');
+  const provRes = await app.inject({
+    method: 'POST',
+    url: '/api/demo/provision-paypal',
+    payload: {},
+  });
+  console.log('Provision status:', provRes.statusCode);
+  const provBody = JSON.parse(provRes.payload);
+  console.log(`Provisioned ${provBody.provisioned?.length || 0} invoices.`);
+
+  console.log('\n=== Step 5: First POST /api/agent/run ===');
   const run1Res = await app.inject({
     method: 'POST',
     url: '/api/agent/run',
@@ -40,7 +50,7 @@ async function runLiveCheck() {
   const run1Body = JSON.parse(run1Res.payload);
   console.log(`Run 1 generated ${run1Body.actions?.length} actions.`);
 
-  console.log('\n=== Step 5: Second POST /api/agent/run ===');
+  console.log('\n=== Step 6: Second POST /api/agent/run ===');
   const run2Res = await app.inject({
     method: 'POST',
     url: '/api/agent/run',
@@ -50,91 +60,46 @@ async function runLiveCheck() {
   const run2Body = JSON.parse(run2Res.payload);
   console.log(`Run 2 returned ${run2Body.actions?.length} actions.`);
 
-  console.log('\n=== Step 6: Table of Actions from Run 2 ===');
-  console.log('| Invoice ID | Type | Status | Reason (first 120 chars) |');
-  console.log('| :--- | :--- | :--- | :--- |');
-  for (const act of run2Body.actions) {
-    const reasonSnippet = (act.reason || '').slice(0, 120).replace(/\|/g, '\\|');
-    console.log(`| ${act.invoiceId} | ${act.type} | ${act.status} | ${reasonSnippet} |`);
-  }
+  console.log('\n=== Step 7: GET /api/actions?open=true (8 rows expected) ===');
+  const openRes = await app.inject({
+    method: 'GET',
+    url: '/api/actions?open=true',
+  });
+  console.log('Open actions HTTP status:', openRes.statusCode);
+  const openActions = JSON.parse(openRes.payload);
+  console.log(`Open actions count: ${openActions.length}`);
+  console.log('\n| # | Invoice ID | Type | Status | Reason (first 150 chars) | reasonDisplay | reasonSource |');
+  console.log('| :- | :--- | :--- | :--- | :--- | :--- | :--- |');
+  openActions.forEach((act: any, idx: number) => {
+    const reason150 = (act.reason || '').slice(0, 150).replace(/\|/g, '\\|');
+    const display100 = (act.reasonDisplay || '').slice(0, 100).replace(/\|/g, '\\|');
+    const source = (act.reasonSource || '').replace(/\|/g, '\\|');
+    console.log(`| ${idx + 1} | ${act.invoiceId} | ${act.type} | ${act.status} | ${reason150} | ${display100} | ${source} |`);
+  });
 
-  console.log('\n=== Step 7: GET /api/dashboard ===');
+  console.log('\n=== Step 8: POST /api/demo/simulate-payment on inv_001 ===');
+  const payRes = await app.inject({
+    method: 'POST',
+    url: '/api/demo/simulate-payment',
+    payload: { invoiceId: 'inv_001', amountCents: 350000 },
+  });
+  console.log('Simulate payment status:', payRes.statusCode);
+  const payBody = JSON.parse(payRes.payload);
+  console.log(`Payment confirmed: invoice status=${payBody.invoice?.status}, amountPaid=${payBody.invoice?.amountPaid}, cashBalance=${payBody.cashBalance}`);
+
+  console.log('\n=== Step 9: GET /api/dashboard (confirm cash 1330000 and shortfall 0) ===');
   const dashRes = await app.inject({
     method: 'GET',
     url: '/api/dashboard',
   });
+  console.log('Dashboard status:', dashRes.statusCode);
   const dashBody = JSON.parse(dashRes.payload);
-  console.log('Dashboard KPIs:', JSON.stringify(dashBody.kpis, null, 2));
-
-  console.log('\n=== Step 8: POST /api/chat ("Can I cover payroll on Friday?") ===');
-  const chatRes = await app.inject({
-    method: 'POST',
-    url: '/api/chat',
-    payload: { question: 'Can I cover payroll on Friday?' },
-  });
-  const chatBody = JSON.parse(chatRes.payload);
-  console.log('Chat Status:', chatRes.statusCode);
-  console.log('Chat Answer Text:', chatBody.text);
-  console.log('Tool Calls:', chatBody.toolCalls ? chatBody.toolCalls.map((tc: any) => tc.name) : []);
-  if (chatBody.forecast) {
-    console.log('Forecast Shortfall:', chatBody.forecast.shortfall);
-    console.log('Forecast Lowest Amount:', chatBody.forecast.lowest?.amount);
-    console.log('Forecast Lowest Date:', chatBody.forecast.lowest?.date);
-  }
-
-  console.log('\n=== Step 9: Approve Discount Action for Largest Invoice ===');
-  const discountActions = run2Body.actions.filter((a: any) => a.type === 'OFFER_DISCOUNT');
-  const invoiceMap = new Map(dashBody.invoices.map((inv: any) => [inv.id, inv]));
-  discountActions.sort((a: any, b: any) => {
-    const invA = invoiceMap.get(a.invoiceId);
-    const invB = invoiceMap.get(b.invoiceId);
-    const remA = invA ? invA.amount - invA.amountPaid : 0;
-    const remB = invB ? invB.amount - invB.amountPaid : 0;
-    return remB - remA;
-  });
-
-  const largestDiscountAction = discountActions[0];
-  if (largestDiscountAction) {
-    const targetInv = invoiceMap.get(largestDiscountAction.invoiceId) as any;
-    console.log(`Largest invoice with discount: ${largestDiscountAction.invoiceId} (${targetInv?.number}, amount: ${targetInv?.amount})`);
-    console.log(`PayPal Invoice ID: ${targetInv?.paypalInvoiceId || '(none)'}`);
-
-    const approveRes = await app.inject({
-      method: 'POST',
-      url: `/api/actions/${largestDiscountAction.id}/approve`,
-      payload: { note: 'Approving discount for live check' },
-    });
-    console.log('Approve response status:', approveRes.statusCode);
-    const approveBody = JSON.parse(approveRes.payload);
-    if (approveRes.statusCode === 200) {
-      console.log('Action successfully approved and executed:', approveBody.status);
-    } else if (approveRes.statusCode === 409) {
-      console.log(`Action approval was rejected as expected with 409 ${approveBody.error?.code}: ${approveBody.error?.message} (invoice is unprovisioned in PayPal sandbox).`);
-    } else {
-      console.log('Approval result:', JSON.stringify(approveBody, null, 2));
-    }
-  } else {
-    console.log('No discount action found in run results.');
-  }
-
-  if (process.env.GEMINI_API_KEY) {
-    console.log('\n=== Step 10: Repeat with LLM_PROVIDER=gemini ===');
-    process.env.LLM_PROVIDER = 'gemini';
-    resetCachedEnv();
-    resetAgentInstance();
-    const geminiRunRes = await app.inject({
-      method: 'POST',
-      url: '/api/agent/run',
-      payload: {},
-    });
-    const geminiBody = JSON.parse(geminiRunRes.payload);
-    for (const act of geminiBody.actions.slice(0, 3)) {
-      console.log(`[gemini] ${act.invoiceId} | ${act.type} | ${act.reason}`);
-    }
-  } else {
-    console.log('\n=== Step 10: GEMINI_API_KEY check ===');
-    console.log('GEMINI_API_KEY is not configured in local environment; MockLlm provider path was used.');
-  }
+  console.log('Dashboard KPIs:');
+  console.log(`  cash: ${dashBody.kpis?.cash} (expected 1330000)`);
+  console.log(`  shortfall: ${dashBody.kpis?.shortfall} (expected 0)`);
+  console.log(`  overdueTotal: ${dashBody.kpis?.overdueTotal}`);
+  console.log(`  overdueCount: ${dashBody.kpis?.overdueCount}`);
+  console.log(`  lowest:`, dashBody.kpis?.lowest);
 
   await app.close();
   await closeDb();
@@ -145,4 +110,3 @@ runLiveCheck().catch((err) => {
   console.error('Live check failed:', err);
   process.exit(1);
 });
-

@@ -1,4 +1,4 @@
-import { eq, desc, and, isNull } from 'drizzle-orm';
+import { eq, desc, and, isNull, inArray } from 'drizzle-orm';
 import type {
   Business,
   Payer,
@@ -224,9 +224,26 @@ export class PolicyRepository {
 
 // ── Action Record Repository ──────────────────────────────────────────────
 export class ActionRecordRepository {
-  async list(): Promise<ActionRecord[]> {
+  async list(options?: { open?: boolean }): Promise<ActionRecord[]> {
     const db = getDb();
-    const rows = await db.select().from(actionRecords).orderBy(desc(actionRecords.createdAt));
+    const rows = options?.open
+      ? await db
+          .select()
+          .from(actionRecords)
+          .where(
+            inArray(actionRecords.status, [
+              'PROPOSED',
+              'AWAITING_APPROVAL',
+              'BLOCKED',
+              'APPROVED',
+            ]),
+          )
+          .orderBy(desc(actionRecords.createdAt))
+      : await db
+          .select()
+          .from(actionRecords)
+          .orderBy(desc(actionRecords.createdAt));
+
     return rows.map((r) => ({
       ...r,
       simulation: r.simulation ?? undefined,
