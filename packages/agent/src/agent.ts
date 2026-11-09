@@ -27,7 +27,11 @@ import {
   type GroundingFactsInput,
 } from './grounding.js';
 import { DeterministicIdGen, type IdGen } from './ids.js';
-import { buildCandidates, type Candidate } from './options.js';
+import {
+  buildCandidates,
+  filterEligibleCandidates,
+  type Candidate,
+} from './options.js';
 import {
   buildSystemPrompt,
   buildUserPrompt,
@@ -170,7 +174,7 @@ export class SettleAgent implements AgentPort {
 
         if (options.length === 0) {
           // ESCALATE with templated reason from snapshot data. No LLM call -> path=rules.
-          const escalateReason = `Payer persona ${payer.persona} is unresponsive. Escalating invoice ${invoice.number} (${formatUsd(remaining)} due ${invoice.dueDate}) for manual collection.`;
+          const escalateReason = `Escalate invoice ${invoice.number} (${formatUsd(remaining)} due ${invoice.dueDate}) for ${payer.name} to the owner for manual collection.`;
           const actionType: ActionType = 'ESCALATE';
           const actionParams: ActionParams = {};
 
@@ -220,9 +224,14 @@ export class SettleAgent implements AgentPort {
           this.engine.simulate(workingInput, change),
         );
 
-        // 3c. Build candidates
-        const candidates = buildCandidates(simulations, invoice, payer);
-        const candidateIds = candidates.map((c) => c.id);
+        // 3c. Compute eligible candidates and situation
+        const { eligible, situation } = filterEligibleCandidates(
+          simulations,
+          invoice,
+          payer,
+        );
+
+        const candidateIds = eligible.map((c) => c.id);
         const { jsonSchema, validator } = buildDecisionSchema(candidateIds);
 
         // 3d. LLM decision with retry ONCE + grounding check, then deterministic fallback
@@ -235,7 +244,8 @@ export class SettleAgent implements AgentPort {
         const user = buildUserPrompt({
           invoice,
           payer,
-          candidates,
+          candidates: eligible,
+          situation,
         });
 
         try {
@@ -251,8 +261,9 @@ export class SettleAgent implements AgentPort {
 
           const parsed = validator.safeParse(raw);
           if (parsed.success) {
-            const found = candidates.find((c) => c.id === parsed.data.optionId);
+            const found = eligible.find((c) => c.id === parsed.data.optionId);
             if (found) {
+              const isLengthValid = parsed.data.reason.length <= 240;
               const candFacts: GroundingFactsInput = {
                 invoice,
                 payer,
@@ -265,7 +276,7 @@ export class SettleAgent implements AgentPort {
               const candAllowed = buildAllowedSet(candFacts);
               const groundCheck = checkGrounding(parsed.data.reason, candAllowed);
 
-              if (groundCheck.ok) {
+              if (groundCheck.ok && isLengthValid) {
                 chosenCandidate = found;
                 modelReason = parsed.data.reason;
                 this.lastRunMetrics.llmValid += 1;
@@ -274,8 +285,17 @@ export class SettleAgent implements AgentPort {
                 this.lastRunMetrics.groundingFailures += 1;
                 this.lastRunMetrics.retries += 1;
 
-                // Retry ONCE with feedback on ungrounded offenders
-                const retryPrompt = `${user}\n\nPREVIOUS REASON FAILED GROUNDING: Contains ungrounded tokens: ${groundCheck.offenders.join(', ')}.\nPlease remove these ungrounded values and quote only verified facts.`;
+                // Retry ONCE with feedback on ungrounded offenders / length
+                const failureDetails = [
+                  !isLengthValid ? 'Reason exceeds 240 characters' : '',
+                  !groundCheck.ok
+                    ? `Contains ungrounded or forbidden tokens: ${groundCheck.offenders.join(', ')}`
+                    : '',
+                ]
+                  .filter(Boolean)
+                  .join('; ');
+
+                const retryPrompt = `${user}\n\nPREVIOUS REASON FAILED VALIDATION: ${failureDetails}.\nPlease write 1-2 plain English sentences (<= 240 characters) naming the payer and invoice, action in words, effect in dollars ($) and dates. Do not include option IDs, "cents", "lowestDelta", "cashCost", or "closesGap".`;
                 const retryRaw = await this.llm.generateStructured<{
                   optionId: string;
                   reason: string;
@@ -287,7 +307,7 @@ export class SettleAgent implements AgentPort {
 
                 const retryParsed = validator.safeParse(retryRaw);
                 if (retryParsed.success) {
-                  const retryFound = candidates.find(
+                  const retryFound = eligible.find(
                     (c) => c.id === retryParsed.data.optionId,
                   );
                   if (retryFound) {
@@ -304,7 +324,8 @@ export class SettleAgent implements AgentPort {
                       retryParsed.data.reason,
                       retryAllowed,
                     );
-                    if (retryGround.ok) {
+                    const retryLengthValid = retryParsed.data.reason.length <= 240;
+                    if (retryGround.ok && retryLengthValid) {
                       chosenCandidate = retryFound;
                       modelReason = retryParsed.data.reason;
                       this.lastRunMetrics.llmValid += 1;
@@ -325,7 +346,7 @@ export class SettleAgent implements AgentPort {
           // Retry ONCE if invalid schema or optionId
           if (!chosenCandidate && !groundingFailed) {
             this.lastRunMetrics.retries += 1;
-            const retryPrompt = `${user}\n\nPREVIOUS ATTEMPT WAS INVALID. Please choose one valid optionId and reason.`;
+            const retryPrompt = `${user}\n\nPREVIOUS ATTEMPT WAS INVALID. Please choose one valid optionId from: ${candidateIds.join(', ')} and provide an owner-facing reason (<= 240 chars).`;
             const retryRaw = await this.llm.generateStructured<{
               optionId: string;
               reason: string;
@@ -337,7 +358,7 @@ export class SettleAgent implements AgentPort {
 
             const retryParsed = validator.safeParse(retryRaw);
             if (retryParsed.success) {
-              const found = candidates.find(
+              const found = eligible.find(
                 (c) => c.id === retryParsed.data.optionId,
               );
               if (found) {
@@ -351,7 +372,8 @@ export class SettleAgent implements AgentPort {
                   asOf: snapshot.business.asOf,
                 });
                 const groundCheck = checkGrounding(retryParsed.data.reason, candAllowed);
-                if (groundCheck.ok) {
+                const retryLengthValid = retryParsed.data.reason.length <= 240;
+                if (groundCheck.ok && retryLengthValid) {
                   chosenCandidate = found;
                   modelReason = retryParsed.data.reason;
                   this.lastRunMetrics.llmValid += 1;
@@ -373,7 +395,7 @@ export class SettleAgent implements AgentPort {
         if (!chosenCandidate) {
           path = 'fallback';
           this.lastRunMetrics.fallbacks += 1;
-          chosenCandidate = deterministicChoice(candidates);
+          chosenCandidate = deterministicChoice(eligible);
           modelReason = templatedReason(chosenCandidate, invoice);
         }
 

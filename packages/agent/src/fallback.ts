@@ -40,10 +40,13 @@ export function deterministicChoice(candidates: Candidate[]): Candidate {
     return closing[0]!.cand;
   }
 
-  // Else largest lowestDelta
+  // Else largest lowestDelta, ties broken by lowest cashCost, then index
   indexed.sort((a, b) => {
     if (a.cand.lowestDelta !== b.cand.lowestDelta) {
       return b.cand.lowestDelta - a.cand.lowestDelta;
+    }
+    if (a.cand.cashCost !== b.cand.cashCost) {
+      return a.cand.cashCost - b.cand.cashCost;
     }
     return a.index - b.index;
   });
@@ -54,40 +57,32 @@ export function deterministicChoice(candidates: Candidate[]): Candidate {
 /**
  * Generates a deterministic templated explanation quoting strictly formatted facts
  * in natural, owner-friendly language without internal IDs.
- * Fits within the 280 character limit.
+ * Plain English, 1-2 sentences, <= 240 characters.
  */
 export function templatedReason(candidate: Candidate, invoice: Invoice): string {
   const remaining = invoice.amount - invoice.amountPaid;
   const remainingFormatted = formatUsd(remaining);
-  const costFormatted = formatUsd(candidate.cashCost);
-  const deltaFormatted = formatUsd(candidate.lowestDelta);
+  const payerName = candidate.payerName;
 
-  if (candidate.id === 'escalate') {
-    return `Escalating invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) for manual collection because no automated recovery closes the gap.`;
+  if (candidate.id === 'escalate' || candidate.change.type === ('ESCALATE' as any)) {
+    return `Escalate invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) for ${payerName} to the owner for manual collection.`;
   }
 
-  if (candidate.closesGap) {
-    if (candidate.change.type === 'REMIND') {
-      return `Sending reminder for invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) to recover cash and close the cashflow gap.`;
-    }
-    if (candidate.change.type === 'OFFER_DISCOUNT') {
-      return `Offering a ${candidate.change.discountPct}% discount on invoice ${invoice.number} to accelerate ${deltaFormatted} at a cost of ${costFormatted}, closing the cashflow gap.`;
-    }
-    if (candidate.change.type === 'OFFER_INSTALMENTS') {
-      return `Offering ${candidate.change.count} instalments spaced ${candidate.change.spacingDays} days on invoice ${invoice.number} to recover ${remainingFormatted} and close the gap.`;
-    }
-    return `Applying ${candidate.change.type} on invoice ${invoice.number} (${remainingFormatted}) to improve balance by ${deltaFormatted} at cost ${costFormatted}, closing the gap.`;
-  }
-
-  // Does not close gap
   if (candidate.change.type === 'REMIND') {
-    return `Sending reminder for invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) to recover cash and improve balance by ${deltaFormatted}.`;
+    return `Send a reminder to ${payerName} for invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) to prompt on-time settlement.`;
   }
+
   if (candidate.change.type === 'OFFER_DISCOUNT') {
-    return `Offering a ${candidate.change.discountPct}% discount on invoice ${invoice.number} to accelerate ${deltaFormatted} at a cost of ${costFormatted}.`;
+    const discounted = remaining - candidate.cashCost;
+    const discountedFormatted = formatUsd(discounted);
+    const expectedDate = candidate.change.newExpectedDate ?? invoice.dueDate;
+    return `Offer a ${candidate.change.discountPct}% early-payment discount to ${payerName} on invoice ${invoice.number} to accelerate ${discountedFormatted} due ${expectedDate}.`;
   }
+
   if (candidate.change.type === 'OFFER_INSTALMENTS') {
-    return `Offering ${candidate.change.count} instalments spaced ${candidate.change.spacingDays} days on invoice ${invoice.number} to improve cash by ${deltaFormatted}.`;
+    const firstDate = candidate.change.firstDate ?? invoice.dueDate;
+    return `Split invoice ${invoice.number} for ${payerName} into ${candidate.change.count} instalments to recover ${remainingFormatted} starting ${firstDate}.`;
   }
-  return `Applying ${candidate.change.type} on invoice ${invoice.number} (${remainingFormatted}) to improve balance by ${deltaFormatted} at cost ${costFormatted}.`;
+
+  return `Apply payment arrangement for invoice ${invoice.number} (${remainingFormatted} due ${invoice.dueDate}) with ${payerName}.`;
 }
