@@ -7,7 +7,7 @@ import { closeDb } from '../src/db/index.js';
 import { resetCachedEnv } from '../src/config/env.js';
 import { resetAgentInstance, setAgentInstance, resetAgentRunLock } from '../src/adapters/agent.js';
 import { resetEngineInstance } from '../src/adapters/engine.js';
-import { ActionRecordRepository, AuditEventRepository } from '../src/db/repositories.js';
+import { ActionRecordRepository, AuditEventRepository, PolicyRepository } from '../src/db/repositories.js';
 
 describe('Agent Action Superseding, Closed Action Guard, and Run Lock (Item 4)', () => {
   let app: FastifyInstance;
@@ -54,6 +54,11 @@ describe('Agent Action Superseding, Closed Action Guard, and Run Lock (Item 4)',
       payload: {},
     });
     expect(resetRes.statusCode).toBe(200);
+
+    // Set autoApproveMaxAmount to 0 so all generated actions require approval and remain open
+    const policyRepo = new PolicyRepository();
+    const policy = await policyRepo.get();
+    await policyRepo.update({ ...policy, autoApproveMaxAmount: 0 });
 
     // 2. First agent run
     const run1 = await app.inject({
