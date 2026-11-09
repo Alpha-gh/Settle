@@ -32,7 +32,15 @@ import { getRawSql, getDb } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
-import { getAgent, acquireAgentRunLock, releaseAgentRunLock } from './adapters/agent.js';
+import {
+  getAgent,
+  acquireAgentRunLock,
+  releaseAgentRunLock,
+  getLastLlmError,
+  clearLastLlmError,
+  getActiveLlm,
+} from './adapters/agent.js';
+import { redactSecrets } from './utils/redact.js';
 import { StubAgent } from './adapters/stubs.js';
 import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
@@ -88,11 +96,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     max: 60,
     timeWindow: '1 minute',
     allowList: (req) => {
-      if (req.method !== 'POST') return true;
-      if (req.url.startsWith('/api/demo')) return true;
       if (env.NODE_ENV === 'test' && req.headers['x-test-rate-limit'] !== 'true') {
         return true;
       }
+      if (req.url.startsWith('/api/debug/llm')) {
+        return false;
+      }
+      if (req.method !== 'POST') return true;
+      if (req.url.startsWith('/api/demo')) return true;
       return false;
     },
     errorResponseBuilder: (_req, context) => {
@@ -385,6 +396,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         }
       }
 
+    clearLastLlmError();
     const snapshot = await getCurrentSnapshot();
     let result: AgentRunResult;
 
@@ -419,6 +431,50 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           },
         });
       }
+    }
+
+    // Check if agent fell back from LLM path (Item 2a)
+    const hasFallbackAction = result.actions.some((a) =>
+      a.reason.includes('path=fallback'),
+    );
+    const recordedLlmError = getLastLlmError();
+
+    if (hasFallbackAction || recordedLlmError) {
+      const activeLlm = await getActiveLlm().catch(() => null);
+      const provider = recordedLlmError?.provider || activeLlm?.info?.provider || 'gemini';
+      const model = recordedLlmError?.model || activeLlm?.info?.model || 'gemini-1.5-flash';
+      const status = recordedLlmError?.status ?? null;
+      const rawErrorMessage =
+        recordedLlmError?.errorMessage ||
+        'LLM call failed or candidate ungrounded; fell back to deterministic rules';
+      const errorMessage = redactSecrets(rawErrorMessage);
+
+      request.log.warn(
+        {
+          provider,
+          model,
+          status,
+          error: errorMessage,
+        },
+        `Agent fell back from LLM path: ${errorMessage}`,
+      );
+
+      const fallbackAudit: AuditEvent = {
+        id: randomUUID(),
+        ts: new Date().toISOString(),
+        actor: 'agent',
+        kind: 'agent.llm_fallback',
+        summary: `Agent fell back from LLM (provider=${provider}, model=${model}, status=${status ?? 'none'}): ${errorMessage}`,
+        detail: {
+          provider,
+          model,
+          status,
+          error: errorMessage,
+        },
+      };
+
+      await auditRepo.append(fallbackAudit);
+      eventBus.emitEvent({ type: 'audit.appended', payload: fallbackAudit });
     }
 
     if (targetInvoiceId) {
@@ -743,6 +799,106 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
   });
+
+  // ── Debug LLM Endpoints (Item 3) ──
+  app.get(
+    '/api/debug/llm',
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (_request, reply) => {
+      const currentEnv = getEnv();
+      const activeLlm = await getActiveLlm().catch(() => null);
+
+      const requestedProvider =
+        (process.env.LLM_PROVIDER || '').trim().toLowerCase() || 'mock';
+      const provider = activeLlm?.info?.provider || requestedProvider;
+      const model =
+        activeLlm?.info?.model ||
+        process.env.LLM_MODEL ||
+        process.env.GEMINI_MODEL ||
+        'mock-model';
+
+      let hasKey = false;
+      if (provider === 'gemini') {
+        hasKey = !!process.env.GEMINI_API_KEY?.trim();
+      } else if (provider === 'anthropic') {
+        hasKey = !!process.env.ANTHROPIC_API_KEY?.trim();
+      } else if (provider === 'openai') {
+        hasKey = !!process.env.OPENAI_API_KEY?.trim();
+      } else if (provider === 'mock') {
+        hasKey = true;
+      }
+
+      return reply.send({
+        provider,
+        model,
+        hasKey,
+        agentImpl: currentEnv.AGENT_IMPL,
+        engineImpl: currentEnv.ENGINE_IMPL,
+      });
+    },
+  );
+
+  app.post(
+    '/api/debug/llm/ping',
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (request, reply) => {
+      const start = Date.now();
+      try {
+        const activeLlm = await getActiveLlm();
+        const testRes = await activeLlm.generateStructured<{ reply: string }>({
+          system:
+            'You are a health probe. Always respond with the JSON object {"reply": "ok"}.',
+          user: 'reply with ok',
+          jsonSchema: {
+            type: 'object',
+            properties: {
+              reply: { type: 'string' },
+            },
+            required: ['reply'],
+          },
+        });
+
+        const latencyMs = Date.now() - start;
+        return reply.send({
+          ok: true,
+          status: 200,
+          message: redactSecrets(testRes?.reply || 'ok'),
+          latencyMs,
+        });
+      } catch (err: any) {
+        const latencyMs = Date.now() - start;
+        const status = err?.status || (err?.statusCode ?? 502);
+        const rawMessage = err?.message || String(err);
+        const redactedMessage = redactSecrets(rawMessage);
+
+        request.log.warn(
+          { err, status, latencyMs },
+          `Debug LLM ping failed: ${redactedMessage}`,
+        );
+
+        return reply.status(200).send({
+          ok: false,
+          status,
+          message: redactedMessage,
+          latencyMs,
+        });
+      }
+    },
+  );
 
   // 9. Audit Events
   app.get('/api/audit', async () => {

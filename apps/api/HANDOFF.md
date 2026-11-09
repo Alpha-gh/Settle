@@ -130,6 +130,14 @@ All error responses strictly follow the shape:
   - *Response*: `{ "status": "ok", "invoice": Invoice, "cashBalance": number }`
 - **`POST /api/webhooks/paypal`**: Webhook listener for PayPal events (`INVOICING.INVOICE.PAID`, `REFUNDED`). Reconciles cash balance atomically.
 
+### Debug & LLM Diagnostic Endpoints (Rate Limited)
+- **`GET /api/debug/llm`**: Inspects the active LLM configuration and provider status without exposing secrets. Rate-limited (30 req/min).
+  - *Response*: `{ "provider": string, "model": string, "hasKey": boolean, "agentImpl": string, "engineImpl": string }`
+  - *Security Guardrail*: The actual API key or key substring is **never** returned; only `hasKey: boolean` is exposed.
+- **`POST /api/debug/llm/ping`**: Dispatches one minimal probe call through the active LLM adapter ("reply with ok") to verify upstream provider connectivity, measure roundtrip latency, and validate JSON response parsing. Rate-limited (10 req/min).
+  - *Response*: `{ "ok": boolean, "status": number, "message": string, "latencyMs": number }`
+  - *Security Guardrail*: Any API keys, Authorization tokens, or URL query parameters in messages or errors are strictly redacted before output.
+
 ---
 
 ## 4. Empirical PayPal Sandbox Spike Findings
