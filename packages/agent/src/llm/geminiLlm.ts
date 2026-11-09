@@ -4,6 +4,9 @@ import {
   LlmMalformedOutputError,
   LlmTimeoutError,
 } from './errors.js';
+import { sanitizeGeminiSchema } from './geminiSchema.js';
+
+export { sanitizeGeminiSchema } from './geminiSchema.js';
 
 // NOTE: Please confirm current model IDs in the official Google Gemini API documentation.
 const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
@@ -16,39 +19,19 @@ export interface GeminiLlmOptions {
   thinkingBudget?: number;
 }
 
-export function sanitizeGeminiSchema(raw: unknown): unknown {
-  if (raw === null || typeof raw !== 'object') {
-    return raw;
+function truncateExcerpt(text: string, maxLen = 200): string {
+  if (!text || typeof text !== 'string') return '';
+  let clean = text.replace(/AIza[0-9A-Za-z-_]{20,}/g, '[REDACTED_KEY]');
+  clean = clean.replace(/key=[^&\s"'`]+/gi, 'key=[REDACTED]');
+  clean = clean.replace(/\?[^\s"'`]+/g, '?[REDACTED]');
+  if (clean.length > maxLen) {
+    return clean.slice(0, maxLen) + '... [truncated]';
   }
-
-  if (Array.isArray(raw)) {
-    return raw.map(sanitizeGeminiSchema);
-  }
-
-  const obj = raw as Record<string, unknown>;
-  const clean: Record<string, unknown> = {};
-
-  const allowedKeys = [
-    'type',
-    'format',
-    'description',
-    'nullable',
-    'enum',
-    'properties',
-    'required',
-    'items',
-  ];
-
-  for (const key of Object.keys(obj)) {
-    if (key === 'additionalProperties' || key === '$schema' || key === 'title') {
-      continue;
-    }
-    if (allowedKeys.includes(key)) {
-      clean[key] = sanitizeGeminiSchema(obj[key]);
-    }
-  }
-
   return clean;
+}
+
+function isThoughtPart(part: any): boolean {
+  return Boolean(part && (part.thought || part.thoughtSignature));
 }
 
 export class GeminiLlm implements LlmPort {
@@ -158,33 +141,69 @@ export class GeminiLlm implements LlmPort {
 
     const data = await this.postJson(endpoint, body);
     const candidate = data?.candidates?.[0];
-    const parts = candidate?.content?.parts;
+    const finishReason =
+      candidate?.finishReason || data?.promptFeedback?.blockReason || 'UNKNOWN';
 
-    if (!parts || parts.length === 0) {
+    if (finishReason === 'SAFETY' || data?.promptFeedback?.blockReason) {
+      const excerpt = truncateExcerpt(JSON.stringify(data), 200);
+      console.warn(
+        `[gemini] Response blocked by safety: finishReason=${finishReason}. Excerpt: ${excerpt}`,
+      );
       throw new LlmMalformedOutputError(
-        'Gemini response did not contain candidates[0].content.parts',
+        `Gemini response blocked by safety: finishReason=${finishReason}. Excerpt: ${excerpt}`,
+      );
+    }
+
+    if (finishReason === 'MAX_TOKENS') {
+      const parts = candidate?.content?.parts;
+      const rawText = parts?.map((p: any) => p.text || '').join('') || '';
+      const excerpt = truncateExcerpt(rawText || JSON.stringify(data), 200);
+      console.warn(
+        `[gemini] Output truncated: finishReason=MAX_TOKENS. Excerpt: ${excerpt}`,
+      );
+      throw new LlmMalformedOutputError(
+        `Gemini output truncated: finishReason=MAX_TOKENS. Excerpt: ${excerpt}`,
+      );
+    }
+
+    const parts = candidate?.content?.parts;
+    if (!candidate || !parts || parts.length === 0) {
+      const excerpt = truncateExcerpt(JSON.stringify(data), 200);
+      console.warn(
+        `[gemini] Empty candidate or parts: finishReason=${finishReason}. Excerpt: ${excerpt}`,
+      );
+      throw new LlmMalformedOutputError(
+        `Gemini response did not contain candidates[0].content.parts (finishReason=${finishReason})`,
       );
     }
 
     const nonThoughtParts = parts.filter(
-      (p: any) => !p.thought && typeof p.text === 'string',
+      (p: any) => !isThoughtPart(p) && typeof p.text === 'string',
     );
     const textPart =
       nonThoughtParts.length > 0
         ? nonThoughtParts.map((p: any) => p.text).join('')
         : parts.find((p: any) => typeof p.text === 'string')?.text;
 
-    if (!textPart) {
+    if (!textPart || textPart.trim().length === 0) {
+      const excerpt = truncateExcerpt(JSON.stringify(data), 200);
+      console.warn(
+        `[gemini] Empty text content: finishReason=${finishReason}. Excerpt: ${excerpt}`,
+      );
       throw new LlmMalformedOutputError(
-        'Gemini response did not contain candidates[0].content.parts[0].text',
+        `Gemini response did not contain text content: finishReason=${finishReason}. Excerpt: ${excerpt}`,
       );
     }
 
     try {
       return JSON.parse(textPart) as R;
     } catch (parseErr) {
+      const excerpt = truncateExcerpt(textPart, 200);
+      console.warn(
+        `[gemini] Failed to parse JSON: finishReason=${finishReason}, err=${parseErr instanceof Error ? parseErr.message : String(parseErr)}. Excerpt: ${excerpt}`,
+      );
       throw new LlmMalformedOutputError(
-        `Failed to parse Gemini JSON output: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+        `Failed to parse Gemini JSON output (finishReason=${finishReason}): ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. Excerpt: ${excerpt}`,
       );
     }
   }
@@ -260,7 +279,7 @@ export class GeminiLlm implements LlmPort {
       let hadFunctionCall = false;
 
       for (const part of parts) {
-        if (part.thought) {
+        if (isThoughtPart(part)) {
           continue;
         }
         if (part.functionCall) {
