@@ -59,6 +59,7 @@ import {
   ActionDecisionBodySchema,
   AgentRunRequestBodySchema,
   SimulatePaymentBodySchema,
+  ReconcileBodySchema,
 } from './schemas/index.js';
 
 export interface BuildAppOptions {
@@ -1204,6 +1205,80 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       forecast: result.forecast,
       delta: result.delta,
       newCashBalance: result.newBalance,
+    };
+  });
+
+  // Demo Reconcile (Item 4: idempotent re-sync one or all provisioned invoices from PayPal)
+  app.post('/api/demo/reconcile', async (request, reply) => {
+    const body = ReconcileBodySchema.parse(request.body || {});
+
+    if (body?.invoiceId) {
+      const invoice = await invoiceRepo.getById(body.invoiceId);
+      if (!invoice) {
+        return reply.status(404).send({
+          error: { code: 'NOT_FOUND', message: `Invoice ${body.invoiceId} not found` },
+        });
+      }
+      if (!invoice.paypalInvoiceId) {
+        return reply.status(409).send({
+          error: { code: 'NOT_PROVISIONED', message: 'Invoice is not provisioned in PayPal' },
+        });
+      }
+
+      const result = await reconcileService.reconcileInvoicePayment({
+        invoiceId: invoice.id,
+        paypalInvoiceId: invoice.paypalInvoiceId,
+        actor: 'manual',
+        eventType: 'demo.reconcile',
+      });
+
+      return {
+        status: 'ok',
+        reconciled: [
+          {
+            invoiceId: invoice.id,
+            paypalInvoiceId: invoice.paypalInvoiceId,
+            status: result.invoice.status,
+            amountPaid: result.invoice.amountPaid,
+            delta: result.delta,
+          },
+        ],
+        newCashBalance: result.newBalance,
+        forecast: result.forecast,
+      };
+    }
+
+    // Reconcile all provisioned invoices
+    const allInvoices = await invoiceRepo.list();
+    const provisioned = allInvoices.filter((inv) => Boolean(inv.paypalInvoiceId));
+
+    const reconciled = [];
+    let lastResult: any;
+
+    for (const inv of provisioned) {
+      const res = await reconcileService.reconcileInvoicePayment({
+        invoiceId: inv.id,
+        paypalInvoiceId: inv.paypalInvoiceId!,
+        actor: 'manual',
+        eventType: 'demo.reconcile',
+      });
+      reconciled.push({
+        invoiceId: inv.id,
+        paypalInvoiceId: inv.paypalInvoiceId!,
+        status: res.invoice.status,
+        amountPaid: res.invoice.amountPaid,
+        delta: res.delta,
+      });
+      lastResult = res;
+    }
+
+    const currentBiz = await businessRepo.get();
+
+    return {
+      status: 'ok',
+      reconciled,
+      newCashBalance: currentBiz?.startingBalance ?? lastResult?.newBalance ?? 0,
+      forecast: lastResult?.forecast,
     };
   });
 

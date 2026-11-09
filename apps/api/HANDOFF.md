@@ -243,6 +243,19 @@ The `@settle/agent` default provider is `gemini` using the Google Gemini API. A 
   ```
 - Replays of webhooks produce `delta = 0` and are strictly idempotent.
 
+### Invoice Discount Consistency Convention
+- **Original Amount Preserved**: `Invoice.amount` always stays the original nominal face value (e.g., 350,000 cents for $3,500.00). It is never mutated when a discount is applied.
+- **Discount Percentage**: `Invoice.discountPct` holds the active discount percentage (e.g., `2` for a 2% discount).
+- **Outstanding Balance Calculation**:
+  The amount due according to Settle and matching `@settle/engine` is:
+  $$\text{amountDue} = \text{round}\left(\text{amount} \times \left(1 - \frac{\text{discountPct}}{100}\right)\right) - \text{amountPaid}$$
+- **Paid Status & Actual Paid Total**:
+  An invoice transitions to `PAID` when PayPal reports it as paid in full. When marked `PAID`, `Invoice.amountPaid` is set to PayPal's actual collected total (e.g., 343,000 cents), **not** to the original invoice amount.
+- **Cash Balance Increment**:
+  Cash (`business.startingBalance`) increases by exactly the delta of `amountPaid` (`liveAmountPaid - storedAmountPaid = +343000`).
+- **Double-Discounting Prevention**:
+  Because `Invoice.amount` remains the immutable nominal base and `Invoice.discountPct` is applied as a single scalar multiplier, the discounted invoice is counted exactly once in expected receipt forecasts (remaining = \$3,430.00) and once in cash upon settlement (cash += \$3,430.00, remaining = \$0.00), preventing any compounding or double-discounting anomalies.
+
 ### Expectations for Other Teams
 
 #### For the Engine Team (`@settle/engine`)
