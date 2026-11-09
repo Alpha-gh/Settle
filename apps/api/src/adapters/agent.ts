@@ -1,13 +1,38 @@
 import type { AgentPort, EnginePort, Id, ISODate, LlmPort, Policy } from '@settle/shared';
 import { getEnv } from '../config/env.js';
+import { redactSecrets } from '../utils/redact.js';
 import { getEngine } from './engine.js';
 import { StubAgent } from './stubs.js';
 
 let agentInstance: AgentPort | null = null;
 let agentRunInProgress = false;
 
+export interface LlmErrorInfo {
+  provider: string;
+  model: string;
+  status: number | null;
+  errorMessage: string;
+}
+
+let lastLlmError: LlmErrorInfo | null = null;
+let activeLlmInstance: (LlmPort & { info?: { provider: string; model: string } }) | null = null;
+
+export function getLastLlmError(): LlmErrorInfo | null {
+  return lastLlmError;
+}
+
+export function clearLastLlmError(): void {
+  lastLlmError = null;
+}
+
+export function setLastLlmError(err: LlmErrorInfo | null): void {
+  lastLlmError = err;
+}
+
 export function resetAgentInstance(): void {
   agentInstance = null;
+  activeLlmInstance = null;
+  lastLlmError = null;
 }
 
 export function setAgentInstance(agent: AgentPort | null): void {
@@ -112,6 +137,49 @@ export async function getAgent(): Promise<AgentPort> {
 
     console.log(`[agent] Agent initialized with LLM provider: ${providerName}, model: ${modelName}`);
 
+    // Wrap LLM in an error-tracking proxy to capture failing calls with secrets redacted
+    const trackedLlm: LlmPort & { info?: { provider: string; model: string } } = {
+      info: (llm as any).info || { provider: providerName, model: modelName },
+      async generateStructured<R>(args: {
+        system: string;
+        user: string;
+        jsonSchema: object;
+      }): Promise<R> {
+        try {
+          return await llm.generateStructured<R>(args);
+        } catch (err: any) {
+          const status = err?.status || (err?.statusCode ?? null);
+          const rawMessage = err?.message || String(err);
+          const redactedMessage = redactSecrets(rawMessage);
+          lastLlmError = {
+            provider: (llm as any).info?.provider || providerName,
+            model: (llm as any).info?.model || modelName,
+            status,
+            errorMessage: redactedMessage,
+          };
+          throw err;
+        }
+      },
+      async runWithTools(args: any) {
+        try {
+          return await llm.runWithTools(args);
+        } catch (err: any) {
+          const status = err?.status || (err?.statusCode ?? null);
+          const rawMessage = err?.message || String(err);
+          const redactedMessage = redactSecrets(rawMessage);
+          lastLlmError = {
+            provider: (llm as any).info?.provider || providerName,
+            model: (llm as any).info?.model || modelName,
+            status,
+            errorMessage: redactedMessage,
+          };
+          throw err;
+        }
+      },
+    };
+
+    activeLlmInstance = trackedLlm;
+
     // Honor POLICY_IGNORE_QUIET_HOURS: inject fixed midday UTC clock if true, else SystemClock
     let clock: Clock | undefined;
     if (env.POLICY_IGNORE_QUIET_HOURS) {
@@ -124,7 +192,7 @@ export async function getAgent(): Promise<AgentPort> {
 
     agentInstance = agentModule.createAgent({
       engine,
-      llm,
+      llm: trackedLlm,
       clock,
     });
 
@@ -133,5 +201,29 @@ export async function getAgent(): Promise<AgentPort> {
     throw new Error(
       `Failed to load real @settle/agent (AGENT_IMPL=real): ${err instanceof Error ? err.message : String(err)}. Ensure packages/agent is built and installed.`,
     );
+  }
+}
+
+export async function getActiveLlm(): Promise<
+  LlmPort & { info?: { provider: string; model: string } }
+> {
+  if (activeLlmInstance) {
+    return activeLlmInstance;
+  }
+  // Load real agent to initialize activeLlmInstance if possible
+  try {
+    const agentModule = (await import(
+      /* @vite-ignore */ ('@settle/agent' as string)
+    )) as AgentModuleExports;
+    const llm = agentModule.createLlmFromEnv(process.env);
+    activeLlmInstance = llm;
+    return activeLlmInstance;
+  } catch {
+    activeLlmInstance = {
+      info: { provider: 'mock', model: 'mock-model' },
+      generateStructured: async () => ({ reply: 'ok' }) as any,
+      runWithTools: async () => ({ text: 'ok', toolCalls: [] }),
+    };
+    return activeLlmInstance;
   }
 }
