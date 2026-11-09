@@ -8,6 +8,7 @@ export function createLlmFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): LlmPort & { info?: { provider: string; model: string } } {
   const provider = (env.LLM_PROVIDER || 'mock').trim().toLowerCase();
+  const explicitModel = env.LLM_MODEL?.trim() || undefined;
 
   switch (provider) {
     case 'mock':
@@ -20,7 +21,7 @@ export function createLlmFromEnv(
       }
       return new GeminiLlm({
         apiKey,
-        model: env.GEMINI_MODEL,
+        model: explicitModel || env.GEMINI_MODEL?.trim(),
       });
     }
 
@@ -33,7 +34,7 @@ export function createLlmFromEnv(
       }
       return new AnthropicLlm({
         apiKey,
-        model: env.ANTHROPIC_MODEL,
+        model: explicitModel || env.ANTHROPIC_MODEL?.trim(),
       });
     }
 
@@ -44,7 +45,7 @@ export function createLlmFromEnv(
       }
       return new OpenAiLlm({
         apiKey,
-        model: env.OPENAI_MODEL,
+        model: explicitModel || env.OPENAI_MODEL?.trim(),
       });
     }
 
