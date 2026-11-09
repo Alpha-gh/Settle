@@ -162,3 +162,21 @@ To ensure arithmetic parity across all three systems, `@settle/agent` adheres to
 - **Request**: Add `applyChange(input: ForecastInput, change: ScenarioChange): ForecastInput` to `EnginePort` in `ports.ts`.
 - **Reason**: Allow the agent to fold approved changes through the engine's canonical accounting model instead of an internal adapter.
 
+---
+
+## 9. Decision Candidate Eligibility and Owner-Facing Rationale
+
+To prevent multi-discount over-selection and internal artifact leakage:
+1. **Pre-Filtering Eligible Candidates**:
+   - Before presenting candidate options to the model, `@settle/agent` pre-filters simulated changes based on the working forecast:
+     - **No Breach (`baseline.firstBreachDate === null`)**: Eligible options are those with lowest cash cost (normally `REMIND`, ties kept).
+     - **Breach with Gap-Closing Options**: Eligible options are those that close the gap with lowest cash cost.
+     - **Breach without Gap-Closing Options**: Eligible options are those with largest balance impact (`lowestDelta`), ties broken by lowest cash cost.
+   - The LLM schema enum is restricted strictly to eligible IDs (`opt_1, opt_2, ...`). If only one candidate is eligible, the agent skips choice selection and uses the model only to explain (with deterministic templated fallback).
+   - A factual situation line is provided in the prompt: `"gap already closed by earlier choices"`, `"this option closes the gap"`, or `"nothing closes the gap"`.
+2. **Owner-Facing Plain English Rationale**:
+   - Explanations are 1-2 plain English sentences ($\le 240$ characters).
+   - Clearly states payer name, invoice number, action in words, and business effect in formatted dollars ($) and dates.
+   - Internal artifacts (`opt_1`, "cents", `lowestDelta`, `cashCost`, `closesGap`, "selection guidance") are strictly forbidden and rejected during grounding verification.
+
+
