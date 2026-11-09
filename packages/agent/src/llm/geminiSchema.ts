@@ -254,3 +254,4 @@ export function sanitizeGeminiSchema(raw: unknown): unknown {
   // 3. Recursively sanitize all nodes
   return sanitizeSchemaNode(inlined);
 }
+
