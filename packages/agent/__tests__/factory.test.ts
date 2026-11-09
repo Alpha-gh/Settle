@@ -65,3 +65,4 @@ describe('createLlmFromEnv factory', () => {
     expect(openaiLlm.info?.model).toBe('gpt-4o');
   });
 });
+

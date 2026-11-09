@@ -128,3 +128,4 @@ describe('GeminiLlm request settings and thought token handling', () => {
     expect(res.toolCalls).toHaveLength(0);
   });
 });
+
