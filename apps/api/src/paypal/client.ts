@@ -588,11 +588,12 @@ export class PayPalClient implements PayPalPort {
   }
 
   /**
-   * Retrieves an invoice from PayPal and maps to our InvoiceStatus and amountPaid in cents.
+   * Retrieves an invoice from PayPal and maps to our InvoiceStatus and amountPaid in cents,
+   * along with live current total and remaining amount due.
    */
   public async getInvoice(
     paypalInvoiceId: string,
-  ): Promise<{ status: InvoiceStatus; amountPaid: Cents }> {
+  ): Promise<{ status: InvoiceStatus; amountPaid: Cents; total?: Cents; amountDue?: Cents }> {
     const targetId = this.getReissuedId(paypalInvoiceId);
     const { data: invoice } = await this.request<any>({
       method: 'GET',
@@ -604,7 +605,14 @@ export class PayPalClient implements PayPalPort {
     const paidAmountStr = invoice.payments?.paid_amount?.value ?? '0.00';
     const amountPaid = payPalStringToCents(paidAmountStr);
 
-    return { status, amountPaid };
+    const total = invoice.amount?.value ? payPalStringToCents(invoice.amount.value) : undefined;
+    const amountDue = invoice.due_amount?.value
+      ? payPalStringToCents(invoice.due_amount.value)
+      : total !== undefined
+        ? Math.max(0, total - amountPaid)
+        : undefined;
+
+    return { status, amountPaid, total, amountDue };
   }
 
   /**

@@ -44,6 +44,7 @@ import { redactSecrets } from './utils/redact.js';
 import { StubAgent } from './adapters/stubs.js';
 import { eventBus } from './events/bus.js';
 import { PayPalClient } from './paypal/client.js';
+import { PayPalError } from './paypal/errors.js';
 import { PayPalWebhookHandler } from './paypal/webhook.js';
 import { ActionService, NotProvisionedError, ActionNotOpenError } from './services/actions.js';
 import { enrichActionWithDisplayFields } from './utils/provenance.js';
@@ -58,6 +59,7 @@ import {
   ActionDecisionBodySchema,
   AgentRunRequestBodySchema,
   SimulatePaymentBodySchema,
+  ReconcileBodySchema,
 } from './schemas/index.js';
 
 export interface BuildAppOptions {
@@ -148,6 +150,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       code = 'VALIDATION_ERROR';
       message = 'Request validation failed';
       details = error.errors;
+    } else if (error instanceof PayPalError || error?.name === 'PayPalError') {
+      const debugId = error.debugId || error.debug_id || (error.rawError as any)?.debug_id;
+      request.log.error(
+        {
+          err: error,
+          issues: error.issues,
+          debugId,
+          paypalStatus: error.status,
+        },
+        `PayPal API error: ${error.message}`
+      );
+      return reply.status(502).send({
+        error: {
+          code: 'PAYPAL_ERROR',
+          message: error.message || 'PayPal API error',
+          debugId: debugId || undefined,
+        },
+      });
     } else if (error instanceof ActionNotOpenError || error?.code === 'ACTION_NOT_OPEN') {
       statusCode = 409;
       code = 'ACTION_NOT_OPEN';
@@ -1097,21 +1117,72 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       });
     }
 
-    const remaining = invoice.amount - invoice.amountPaid;
-    const paymentAmount = body.amount ?? remaining;
-    if (paymentAmount <= 0) {
-      return reply.status(400).send({
-        error: { code: 'INVALID_AMOUNT', message: 'Payment amount must be greater than 0' },
+    // Item 1: First call getInvoice to determine live amount actually due according to PayPal
+    const live = (await paypalClient.getInvoice(invoice.paypalInvoiceId)) as {
+      status: string;
+      amountPaid: number;
+      total?: number;
+      amountDue?: number;
+    };
+
+    // Calculate effective live amount due (current total after discount, minus amount already paid)
+    let amountDue: number;
+    if (live.amountDue !== undefined) {
+      amountDue = live.amountDue;
+    } else if (live.total !== undefined) {
+      amountDue = Math.max(0, live.total - live.amountPaid);
+    } else {
+      const discountedTotal = Math.round(invoice.amount * (1 - (invoice.discountPct ?? 0) / 100));
+      amountDue = Math.max(0, discountedTotal - live.amountPaid);
+    }
+
+    if (amountDue <= 0 || live.status === 'PAID') {
+      return reply.status(409).send({
+        error: { code: 'NOTHING_DUE', message: 'Invoice has no outstanding balance due' },
       });
+    }
+
+    // Determine payment amount (cap at amount due if requested amount is specified)
+    let paymentAmount = amountDue;
+    if (body.amount !== undefined) {
+      paymentAmount = Math.min(body.amount, amountDue);
+      if (paymentAmount <= 0) {
+        return reply.status(409).send({
+          error: { code: 'NOTHING_DUE', message: 'Invoice has no outstanding balance due' },
+        });
+      }
     }
 
     let paymentResult: any = { paymentId: `ext_pay_${randomUUID().slice(0, 8)}`, paypalRequestId: randomUUID() };
     if (typeof (paypalClient as any).recordExternalPayment === 'function') {
-      paymentResult = await (paypalClient as any).recordExternalPayment(
-        invoice.paypalInvoiceId,
-        paymentAmount,
-        'Simulated payment via Settle demo',
-      );
+      try {
+        paymentResult = await (paypalClient as any).recordExternalPayment(
+          invoice.paypalInvoiceId,
+          paymentAmount,
+          'Simulated payment via Settle demo',
+        );
+      } catch (err: any) {
+        if (err instanceof PayPalError || err?.name === 'PayPalError') {
+          const debugId = err.debugId || err.debug_id || (err.rawError as any)?.debug_id;
+          request.log.error(
+            {
+              err,
+              issues: err.issues,
+              debugId,
+              paypalStatus: err.status,
+            },
+            `PayPal payment call failed: ${err.message}`
+          );
+          return reply.status(502).send({
+            error: {
+              code: 'PAYPAL_ERROR',
+              message: err.message || 'PayPal API error',
+              debugId: debugId || undefined,
+            },
+          });
+        }
+        throw err;
+      }
     }
 
     // Immediately reconcile via single shared reconciliation path
@@ -1134,6 +1205,80 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       forecast: result.forecast,
       delta: result.delta,
       newCashBalance: result.newBalance,
+    };
+  });
+
+  // Demo Reconcile (Item 4: idempotent re-sync one or all provisioned invoices from PayPal)
+  app.post('/api/demo/reconcile', async (request, reply) => {
+    const body = ReconcileBodySchema.parse(request.body || {});
+
+    if (body?.invoiceId) {
+      const invoice = await invoiceRepo.getById(body.invoiceId);
+      if (!invoice) {
+        return reply.status(404).send({
+          error: { code: 'NOT_FOUND', message: `Invoice ${body.invoiceId} not found` },
+        });
+      }
+      if (!invoice.paypalInvoiceId) {
+        return reply.status(409).send({
+          error: { code: 'NOT_PROVISIONED', message: 'Invoice is not provisioned in PayPal' },
+        });
+      }
+
+      const result = await reconcileService.reconcileInvoicePayment({
+        invoiceId: invoice.id,
+        paypalInvoiceId: invoice.paypalInvoiceId,
+        actor: 'manual',
+        eventType: 'demo.reconcile',
+      });
+
+      return {
+        status: 'ok',
+        reconciled: [
+          {
+            invoiceId: invoice.id,
+            paypalInvoiceId: invoice.paypalInvoiceId,
+            status: result.invoice.status,
+            amountPaid: result.invoice.amountPaid,
+            delta: result.delta,
+          },
+        ],
+        newCashBalance: result.newBalance,
+        forecast: result.forecast,
+      };
+    }
+
+    // Reconcile all provisioned invoices
+    const allInvoices = await invoiceRepo.list();
+    const provisioned = allInvoices.filter((inv) => Boolean(inv.paypalInvoiceId));
+
+    const reconciled = [];
+    let lastResult: any;
+
+    for (const inv of provisioned) {
+      const res = await reconcileService.reconcileInvoicePayment({
+        invoiceId: inv.id,
+        paypalInvoiceId: inv.paypalInvoiceId!,
+        actor: 'manual',
+        eventType: 'demo.reconcile',
+      });
+      reconciled.push({
+        invoiceId: inv.id,
+        paypalInvoiceId: inv.paypalInvoiceId!,
+        status: res.invoice.status,
+        amountPaid: res.invoice.amountPaid,
+        delta: res.delta,
+      });
+      lastResult = res;
+    }
+
+    const currentBiz = await businessRepo.get();
+
+    return {
+      status: 'ok',
+      reconciled,
+      newCashBalance: currentBiz?.startingBalance ?? lastResult?.newBalance ?? 0,
+      forecast: lastResult?.forecast,
     };
   });
 

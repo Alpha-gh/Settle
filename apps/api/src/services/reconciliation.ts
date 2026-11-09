@@ -6,7 +6,7 @@ function formatMoney(cents: number): string {
 import { eq } from 'drizzle-orm';
 import type { Invoice, Id, Cents, AuditEvent, ForecastResult, PayPalPort } from '@settle/shared';
 import { getDb } from '../db/index.js';
-import { businesses, invoices } from '../db/schema.js';
+import { businesses, invoices, auditEvents } from '../db/schema.js';
 import {
   AuditEventRepository,
   BusinessRepository,
@@ -54,8 +54,8 @@ export class PaymentReconciliationService {
 
     const db = getDb();
 
-    // Atomic transaction: update startingBalance and invoice state
-    const { updatedInvoice, delta, previousBalance, newBalance } = await db.transaction(async (tx) => {
+    // Atomic transaction: update startingBalance, invoice state, and audit event atomically
+    const { updatedInvoice, delta, previousBalance, newBalance, payAudit } = await db.transaction(async (tx) => {
       const [currentInv] = await tx
         .select()
         .from(invoices)
@@ -97,6 +97,60 @@ export class PaymentReconciliationService {
         .where(eq(invoices.id, params.invoiceId))
         .returning();
 
+      // Append audit event stating amount received and new cash balance
+      let auditSummary = '';
+      let auditKind = params.eventType || 'invoice.paid';
+
+      if (delta > 0) {
+        auditKind =
+          params.eventType && params.eventType.startsWith('INVOICING.')
+            ? params.eventType
+            : 'invoice.paid';
+        auditSummary = `Payment of ${formatMoney(delta)} received for invoice ${updated.number}. New cash balance: ${formatMoney(newBalance)}.`;
+      } else if (delta < 0) {
+        auditKind =
+          params.eventType && params.eventType.startsWith('INVOICING.')
+            ? params.eventType
+            : 'invoice.refunded';
+        auditSummary = `Refund of ${formatMoney(Math.abs(delta))} processed for invoice ${updated.number}. New cash balance: ${formatMoney(newBalance)}.`;
+      } else {
+        auditSummary = `Reconciled invoice ${updated.number} with status ${liveStatus} and amount paid ${formatMoney(liveAmountPaid)}. Cash balance unchanged: ${formatMoney(newBalance)}.`;
+      }
+
+      const payAudit: AuditEvent = {
+        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        ts: new Date().toISOString(),
+        actor: (params.actor as any) || 'paypal',
+        kind: auditKind,
+        summary: auditSummary,
+        invoiceId: updated.id,
+        paypalRequestId: params.paypalRequestId,
+        detail: {
+          delta,
+          amountReceived: delta > 0 ? delta : 0,
+          refundAmount: delta < 0 ? Math.abs(delta) : 0,
+          previousCashBalance: previousBalance,
+          newCashBalance: newBalance,
+          reconciledStatus: liveStatus,
+          reconciledAmountPaid: liveAmountPaid,
+          paypalInvoiceId: params.paypalInvoiceId,
+          eventId: params.eventId,
+          ...params.extraDetail,
+        },
+      };
+
+      await tx.insert(auditEvents).values({
+        id: payAudit.id,
+        ts: payAudit.ts,
+        actor: payAudit.actor,
+        kind: payAudit.kind,
+        summary: payAudit.summary,
+        invoiceId: payAudit.invoiceId,
+        actionId: payAudit.actionId,
+        paypalRequestId: payAudit.paypalRequestId,
+        detail: payAudit.detail,
+      });
+
       return {
         updatedInvoice: {
           ...updated,
@@ -107,52 +161,11 @@ export class PaymentReconciliationService {
         delta,
         previousBalance,
         newBalance,
+        payAudit,
       };
     });
 
-    // Append audit event stating amount received and new cash balance
-    let auditSummary = '';
-    let auditKind = params.eventType || 'invoice.paid';
-
-    if (delta > 0) {
-      auditKind =
-        params.eventType && params.eventType.startsWith('INVOICING.')
-          ? params.eventType
-          : 'invoice.paid';
-      auditSummary = `Payment of ${formatMoney(delta)} received for invoice ${updatedInvoice.number}. New cash balance: ${formatMoney(newBalance)}.`;
-    } else if (delta < 0) {
-      auditKind =
-        params.eventType && params.eventType.startsWith('INVOICING.')
-          ? params.eventType
-          : 'invoice.refunded';
-      auditSummary = `Refund of ${formatMoney(Math.abs(delta))} processed for invoice ${updatedInvoice.number}. New cash balance: ${formatMoney(newBalance)}.`;
-    } else {
-      auditSummary = `Reconciled invoice ${updatedInvoice.number} with status ${liveStatus} and amount paid ${formatMoney(liveAmountPaid)}. Cash balance unchanged: ${formatMoney(newBalance)}.`;
-    }
-
-    const payAudit: AuditEvent = {
-      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      ts: new Date().toISOString(),
-      actor: (params.actor as any) || 'paypal',
-      kind: auditKind,
-      summary: auditSummary,
-      invoiceId: updatedInvoice.id,
-      paypalRequestId: params.paypalRequestId,
-      detail: {
-        delta,
-        amountReceived: delta > 0 ? delta : 0,
-        refundAmount: delta < 0 ? Math.abs(delta) : 0,
-        previousCashBalance: previousBalance,
-        newCashBalance: newBalance,
-        reconciledStatus: liveStatus,
-        reconciledAmountPaid: liveAmountPaid,
-        paypalInvoiceId: params.paypalInvoiceId,
-        eventId: params.eventId,
-        ...params.extraDetail,
-      },
-    };
-
-    await this.auditRepo.append(payAudit);
+    // Emitted only after transaction successfully commits
     eventBus.emitEvent({ type: 'audit.appended', payload: payAudit });
     eventBus.emitEvent({ type: 'invoice.updated', payload: updatedInvoice });
 

@@ -370,6 +370,12 @@ export const SimulatePaymentBodySchema = z.object({
   amount: CentsSchema.optional(),
 });
 
+export const ReconcileBodySchema = z
+  .object({
+    invoiceId: IdSchema.optional(),
+  })
+  .optional();
+
 export const UpdatePolicyBodySchema = PolicySchema;
 
 // ── Error Response Schema ─────────────────────────────────────────────────
