@@ -46,7 +46,7 @@ class FakePayPal implements PayPalPort {
 
     const reqId = `pp-req-${randomUUID()}`;
     const paypalInvoiceId = `PP-INV-${randomUUID().slice(0, 8)}`;
-    this.createdInvoices.push({ inv, payer });
+    this.createdInvoices.push({ inv: { ...inv, paypalInvoiceId }, payer });
     this.auditTrail.push({ paypalRequestId: reqId, httpStatus: 201, operation: 'createAndSendInvoice' });
 
     const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -88,15 +88,35 @@ class FakePayPal implements PayPalPort {
     this.customStates.set(paypalInvoiceId, { status, amountPaid });
   }
 
-  async getInvoice(paypalInvoiceId: string): Promise<{ status: InvoiceStatus; amountPaid: Cents }> {
+  async getInvoice(
+    paypalInvoiceId: string,
+  ): Promise<{ status: InvoiceStatus; amountPaid: Cents; total?: Cents; amountDue?: Cents }> {
     if (this.customStates.has(paypalInvoiceId)) {
       return this.customStates.get(paypalInvoiceId)!;
     }
     const payments = this.recordedPayments.filter((p) => p.paypalInvoiceId === paypalInvoiceId);
     const totalPaid = payments.reduce((acc, p) => acc + p.amount, 0);
+
+    const created = this.createdInvoices.find(
+      (c) => (c.inv as any).paypalInvoiceId === paypalInvoiceId || (c as any).paypalInvoiceId === paypalInvoiceId,
+    );
+    const updates = this.updatedInvoices.filter((u) => u.paypalInvoiceId === paypalInvoiceId);
+    const latestDiscount = updates.slice().reverse().find((u) => u.patch.discountPct !== undefined)?.patch.discountPct;
+
+    let total: Cents | undefined;
+    if (created) {
+      const baseAmount = created.inv.amount;
+      total = latestDiscount !== undefined ? Math.round((baseAmount * (100 - latestDiscount)) / 100) : baseAmount;
+    }
+
+    const amountDue = total !== undefined ? Math.max(0, total - totalPaid) : undefined;
+    const isPaid = total !== undefined ? totalPaid >= total : totalPaid > 0;
+
     return {
-      status: totalPaid > 0 ? 'PAID' : 'SENT',
+      status: isPaid ? 'PAID' : totalPaid > 0 ? 'PARTIALLY_PAID' : 'SENT',
       amountPaid: totalPaid,
+      total,
+      amountDue,
     };
   }
 
