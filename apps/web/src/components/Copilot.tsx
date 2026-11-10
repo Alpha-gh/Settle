@@ -16,7 +16,7 @@ export interface CopilotMessage {
 }
 
 export const SUGGESTED_PROMPTS = [
-  { text: 'Can I cover payroll on Friday?', testId: TEST_IDS.chatSuggestion1 },
+  { text: 'Can I cover the next payroll?', testId: TEST_IDS.chatSuggestion1 },
   { text: 'What if I buy $3,000 of stock on Monday?', testId: TEST_IDS.chatSuggestion2 },
   { text: 'Which invoice should I chase first?', testId: TEST_IDS.chatSuggestion3 },
 ];
@@ -38,7 +38,7 @@ export const Copilot: React.FC<CopilotProps> = ({ isOpen, onClose }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { data: snapshot } = useSnapshot();
-  const reserveThreshold: Cents = snapshot?.business.reserveThreshold ?? 500000;
+  const reserveThreshold: Cents | undefined = snapshot?.business.reserveThreshold;
 
   const chatMutation = useChat();
 

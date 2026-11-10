@@ -7,7 +7,7 @@ import { TEST_IDS } from '../testids';
 
 export interface BalanceChartProps {
   forecast: ForecastResult;
-  reserve: Cents;
+  reserve?: Cents;
   scenario?: ForecastResult;
   scenarioLabel?: string;
   height?: number;
@@ -19,7 +19,7 @@ interface ChartDatum {
   receipts: number;
   outflows: number;
   closing: number;
-  reserve: number;
+  reserve?: number;
   belowReserve: boolean;
   scenarioClosing?: number;
 }
@@ -58,7 +58,7 @@ export const BalanceChart: React.FC<BalanceChartProps> = ({
         receipts: day.receipts,
         outflows: day.outflows,
         closing: day.closing,
-        reserve,
+        ...(reserve !== undefined ? { reserve } : {}),
         belowReserve: day.belowReserve,
       };
 
@@ -121,22 +121,26 @@ export const BalanceChart: React.FC<BalanceChartProps> = ({
           },
         },
         // 2. Reserve threshold line (dashed muted #475569)
-        {
-          type: 'line',
-          xKey: 'date',
-          yKey: 'reserve',
-          yName: 'Reserve Threshold',
-          stroke: '#64748B',
-          strokeWidth: 1.5,
-          lineDash: [6, 4],
-          marker: { enabled: false },
-          tooltip: {
-            renderer: () => ({
-              title: 'Reserve Threshold',
-              content: `Policy Reserve: ${formatUsd(reserve)}`,
-            }),
-          },
-        },
+        ...(reserve !== undefined
+          ? [
+              {
+                type: 'line' as const,
+                xKey: 'date',
+                yKey: 'reserve',
+                yName: 'Reserve Threshold',
+                stroke: '#64748B',
+                strokeWidth: 1.5,
+                lineDash: [6, 4],
+                marker: { enabled: false },
+                tooltip: {
+                  renderer: () => ({
+                    title: 'Reserve Threshold',
+                    content: `Policy Reserve: ${formatUsd(reserve)}`,
+                  }),
+                },
+              },
+            ]
+          : []),
         // 3. Scenario series in accent color (#1D4ED8)
         ...(scenario
           ? [

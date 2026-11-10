@@ -4,7 +4,7 @@ import type { ActionRecord, Invoice, Payer, Cents } from '@settle/shared';
 import type { EnrichedActionRecord } from '../api/schemas';
 import { TEST_IDS } from '../testids';
 import { formatUsd, formatDate, humanizeStatus, formatActionReason } from '../lib/format';
-import { useApproveAction, useRejectAction, useRunAgent } from '../api/queries';
+import { useApproveAction, useRejectAction, useRunAgent, useSnapshot } from '../api/queries';
 import { humanizeApiError } from '../api/client';
 import { BalanceChart } from './BalanceChart';
 
@@ -24,9 +24,11 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
   action,
   invoice,
   payer,
-  reserve = 500000,
+  reserve,
   lastFocusedElement,
 }) => {
+  const { data: snapshot } = useSnapshot();
+  const effectiveReserve = reserve ?? snapshot?.business.reserveThreshold;
   const isSubmittingRef = useRef(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -265,7 +267,7 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
                   <div className="bg-surface border border-border rounded p-3">
                     <BalanceChart
                       forecast={action.simulation.baseline}
-                      reserve={reserve}
+                      reserve={effectiveReserve}
                       scenario={action.simulation.scenario}
                       scenarioLabel="Scenario"
                       height={200}

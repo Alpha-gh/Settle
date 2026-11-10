@@ -30,7 +30,7 @@ test.describe('Settle 3-Minute Smoke Flow', () => {
     // Verify worklist displays action pills
     await expect(page.getByText(/Offer Discount.*Awaiting Approval/i).first()).toBeVisible();
 
-    // c. Open the co-pilot, click "Can I cover payroll on Friday?", assert an answer with a chart appears, close it.
+    // c. Open the co-pilot, click "Can I cover the next payroll?", assert an answer with a chart appears, close it.
     const copilotToggle = page.getByTestId(TEST_IDS.copilotToggle);
     await copilotToggle.click();
 

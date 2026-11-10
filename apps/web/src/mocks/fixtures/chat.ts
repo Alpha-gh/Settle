@@ -2,7 +2,7 @@ import type { ChatAnswer } from '@settle/shared';
 import { baselineForecast, mockScenarioComparison } from './forecast';
 
 export const CANNED_CHAT_PROMPTS = {
-  payroll: 'Can I cover payroll on Friday?',
+  payroll: 'Can I cover the next payroll?',
   stock: 'What if I buy $3,000 of stock on Monday?',
   chase: 'Which invoice should I chase first?',
 } as const;
@@ -65,7 +65,7 @@ export const cannedChatAnswers: Record<string, ChatAnswer> = {
 };
 
 export const fallbackChatAnswer: ChatAnswer = {
-  text: 'I can analyze cashflow scenarios, upcoming payroll obligations, and invoice recovery strategies. Try asking: "Can I cover payroll on Friday?", "What if I buy $3,000 of stock on Monday?", or "Which invoice should I chase first?".',
+  text: 'I can analyze cashflow scenarios, upcoming payroll obligations, and invoice recovery strategies. Try asking: "Can I cover the next payroll?", "What if I buy $3,000 of stock on Monday?", or "Which invoice should I chase first?".',
   toolCalls: [],
 };
 

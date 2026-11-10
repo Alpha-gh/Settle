@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { TEST_IDS } from '../testids';
 import { useSse } from '../api/sse';
+import { useSnapshot } from '../api/queries';
 import { DevErrorOverlay } from './DevErrorOverlay';
 import { Copilot } from './Copilot';
 import { DemoControls } from './DemoControls';
@@ -20,6 +21,7 @@ const NAV_ITEMS: NavItem[] = [
 
 export const AppShell: React.FC = () => {
   const { connectionState } = useSse();
+  const { data: snapshot } = useSnapshot();
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   return (
@@ -46,7 +48,7 @@ export const AppShell: React.FC = () => {
             </span>
           </div>
           <span className="text-sm font-medium text-muted border-l border-border pl-6">
-            Northwind Studio
+            {snapshot?.business.name ?? 'Settle'}
           </span>
         </div>
 

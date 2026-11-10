@@ -29,7 +29,7 @@ describe('Copilot Component', () => {
     expect(screen.getByText(/Cashflow Copilot/i)).toBeInTheDocument();
     expect(screen.getByText(/Hello. I am Settle Copilot/i)).toBeInTheDocument();
 
-    expect(screen.getByTestId(TEST_IDS.chatSuggestion1)).toHaveTextContent('Can I cover payroll on Friday?');
+    expect(screen.getByTestId(TEST_IDS.chatSuggestion1)).toHaveTextContent('Can I cover the next payroll?');
     expect(screen.getByTestId(TEST_IDS.chatSuggestion2)).toHaveTextContent('What if I buy $3,000 of stock on Monday?');
     expect(screen.getByTestId(TEST_IDS.chatSuggestion3)).toHaveTextContent('Which invoice should I chase first?');
   });
@@ -40,7 +40,7 @@ describe('Copilot Component', () => {
     const input = screen.getByTestId(TEST_IDS.copilotInput);
     const sendBtn = screen.getByTestId(TEST_IDS.copilotSend);
 
-    fireEvent.change(input, { target: { value: 'Can I cover payroll on Friday?' } });
+    fireEvent.change(input, { target: { value: 'Can I cover the next payroll?' } });
     fireEvent.click(sendBtn);
 
     // Thinking state should appear

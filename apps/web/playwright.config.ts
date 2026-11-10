@@ -18,7 +18,7 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        channel: 'msedge',
+        ...(process.platform === 'win32' ? { channel: 'msedge' as const } : {}),
         viewport: { width: 1440, height: 900 },
       },
     },
