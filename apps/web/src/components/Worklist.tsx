@@ -129,7 +129,7 @@ const ProposedActionRenderer = React.memo(({ data }: CellRendererParams) => {
 
   return (
     <div className="flex items-center gap-2 h-full overflow-hidden" title={cleanReason}>
-      <span className={`px-2 py-0.5 rounded text-xs font-medium shrink-0 ${colorClasses}`}>
+      <span className={`px-2 py-0.5 rounded text-xs font-medium shrink-0 whitespace-nowrap ${colorClasses}`}>
         {humanizeStatus(action.type)} &mdash; {humanizeStatus(action.status)}
       </span>
       {cleanReason && (
@@ -233,8 +233,8 @@ export const Worklist: React.FC<WorklistProps> = ({ height = 440 }) => {
         field: 'invoice.number',
         headerName: 'Invoice #',
         pinned: 'left',
-        minWidth: 130,
-        width: 140,
+        minWidth: 110,
+        width: 120,
         sortable: true,
         filter: 'agTextColumnFilter',
         cellRenderer: InvoiceNumberRenderer,
@@ -242,8 +242,8 @@ export const Worklist: React.FC<WorklistProps> = ({ height = 440 }) => {
       {
         field: 'payer.name',
         headerName: 'Payer',
-        minWidth: 160,
-        flex: 1.2,
+        minWidth: 140,
+        flex: 1,
         sortable: true,
         filter: 'agTextColumnFilter',
         valueGetter: (params) => params.data?.payer?.name ?? params.data?.invoice.payerId ?? '',
@@ -251,8 +251,8 @@ export const Worklist: React.FC<WorklistProps> = ({ height = 440 }) => {
       {
         field: 'invoice.amount',
         headerName: 'Amount',
-        minWidth: 120,
-        width: 130,
+        minWidth: 100,
+        width: 110,
         sortable: true,
         headerClass: 'ag-right-aligned-header',
         cellClass: 'text-right tabular font-medium text-ink flex items-center justify-end',
@@ -261,8 +261,8 @@ export const Worklist: React.FC<WorklistProps> = ({ height = 440 }) => {
       {
         field: 'invoice.dueDate',
         headerName: 'Due Date',
-        minWidth: 110,
-        width: 120,
+        minWidth: 100,
+        width: 105,
         sortable: true,
         cellClass: 'tabular text-muted flex items-center',
         valueFormatter: (params) => formatDateShort(params.data?.invoice.dueDate ?? ''),
@@ -270,31 +270,31 @@ export const Worklist: React.FC<WorklistProps> = ({ height = 440 }) => {
       {
         field: 'daysOverdue',
         headerName: 'Days Overdue',
-        minWidth: 125,
-        width: 130,
+        minWidth: 110,
+        width: 115,
         sortable: true,
         cellRenderer: DaysOverdueRenderer,
       },
       {
         field: 'invoice.status',
         headerName: 'Status',
-        minWidth: 130,
-        width: 140,
+        minWidth: 115,
+        width: 125,
         sortable: true,
         filter: 'agTextColumnFilter',
         cellRenderer: InvoiceStatusRenderer,
       },
       {
         headerName: 'Payer Risk',
-        minWidth: 140,
-        width: 150,
+        minWidth: 120,
+        width: 130,
         sortable: false,
         cellRenderer: PayerRiskRenderer,
       },
       {
         headerName: 'Proposed Action',
-        minWidth: 220,
-        flex: 1.5,
+        minWidth: 280,
+        flex: 2.2,
         sortable: false,
         cellRenderer: ProposedActionRenderer,
       },
