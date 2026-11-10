@@ -24,12 +24,13 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm --filter web dev --port 5173',
+    command: 'pnpm --filter web dev:mock --port 5173',
     port: 5173,
     reuseExistingServer: true,
     env: {
       VITE_MOCK_LATENCY_MS: '100',
       VITE_API_BASE: '',
+      VITE_USE_MOCKS: 'true',
     },
   },
 });

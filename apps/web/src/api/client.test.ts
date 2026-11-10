@@ -67,5 +67,24 @@ describe('apiRequest and schema validation', () => {
 
     window.removeEventListener('settle:schema-error', eventSpy);
   });
+
+  it('uses relative URL when VITE_API_BASE is unset and defaults POST body to "{}" with Content-Type: application/json', async () => {
+    const testSchema = z.object({ ok: z.boolean() });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const res = await apiRequest('/api/agent/run', testSchema, { method: 'POST' });
+    expect(res).toEqual({ ok: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('/api/agent/run');
+    expect(init?.body).toBe('{}');
+    expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json');
+  });
 });
 

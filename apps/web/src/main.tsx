@@ -4,10 +4,8 @@ import App from './App';
 import './index.css';
 
 async function prepareApp() {
-  // Rule 7: One env var switches mock/real: VITE_API_BASE.
-  // Unset or empty = start MSW and the in-memory mock event bus.
-  // Set = call that base URL and use EventSource.
-  if (!import.meta.env.VITE_API_BASE) {
+  // Start MSW only when explicitly enabled via VITE_USE_MOCKS=true.
+  if (import.meta.env.VITE_USE_MOCKS === 'true') {
     const { worker } = await import('./mocks/browser');
     await worker.start({
       onUnhandledRequest: 'bypass',

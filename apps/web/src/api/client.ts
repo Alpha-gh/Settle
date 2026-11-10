@@ -92,9 +92,6 @@ const getBaseUrl = (): string => {
   if (import.meta.env.VITE_API_BASE) {
     return import.meta.env.VITE_API_BASE;
   }
-  if (typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null') {
-    return window.location.origin;
-  }
   return '';
 };
 
@@ -114,11 +111,14 @@ export async function apiRequest<T>(
   const baseUrl = getBaseUrl();
   const url = `${baseUrl}${endpoint}`;
 
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const body = method === 'POST' && init?.body === undefined ? '{}' : init?.body;
+
   const headers = new Headers(init?.headers);
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json');
   }
-  if (init?.body && !headers.has('Content-Type')) {
+  if (body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -126,6 +126,7 @@ export async function apiRequest<T>(
   try {
     response = await fetch(url, {
       ...init,
+      body,
       headers,
     });
   } catch (err) {

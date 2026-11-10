@@ -131,7 +131,7 @@ export const AppShell: React.FC = () => {
               />
               <span className="capitalize">{connectionState}</span>
               <span className="text-[10px] text-muted ml-auto font-mono">
-                {import.meta.env.VITE_API_BASE ? 'Live API' : 'MSW Mock'}
+                {import.meta.env.VITE_USE_MOCKS === 'true' ? 'MSW Mock' : 'Live API'}
               </span>
             </div>
           </div>

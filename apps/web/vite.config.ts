@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  define: mode === 'mock' ? { 'import.meta.env.VITE_USE_MOCKS': JSON.stringify('true') } : undefined,
   plugins: [react()],
   resolve: {
     alias: {
@@ -14,6 +15,10 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    proxy: {
+      '/api': 'http://localhost:3000',
+      '/health': 'http://localhost:3000',
+    },
   },
   build: {
     rollupOptions: {
@@ -27,5 +32,5 @@ export default defineConfig({
       },
     },
   },
-});
+}));
 

@@ -26,10 +26,11 @@ export function connectEvents(
   onEvent: (event: SseEvent) => void,
   onStateChange?: (state: ConnectionState) => void,
 ): () => void {
-  const apiBase = import.meta.env.VITE_API_BASE;
+  const useMocks = import.meta.env.VITE_USE_MOCKS === 'true' || typeof EventSource === 'undefined';
+  const apiBase = import.meta.env.VITE_API_BASE || '';
 
   // Mock mode: subscribe to in-memory event bus
-  if (!apiBase) {
+  if (useMocks) {
     onStateChange?.('connected');
     const unsubscribe = mockEventBus.subscribe((rawEvent) => {
       const parsed = sseEventSchema.safeParse(rawEvent);
