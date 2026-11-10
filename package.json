@@ -4,9 +4,9 @@
   "packageManager": "pnpm@10.11.0",
   "engines": { "node": ">=20" },
   "scripts": {
-    "build": "pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/agent build && pnpm --filter @settle/api build",
+    "build": "pnpm --filter @settle/shared build && pnpm --filter @settle/engine build && pnpm --filter @settle/agent build && pnpm --filter @settle/api build && pnpm --filter web build",
     "start": "pnpm --filter @settle/api start",
-    "typecheck": "tsc --build",
+    "typecheck": "tsc --build && pnpm --filter web typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
