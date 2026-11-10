@@ -161,4 +161,19 @@ To receive live asynchronous payment notifications (`INVOICING.INVOICE.PAID`) wh
 - **Same-Origin Operation:** With `VITE_USE_MOCKS` disabled and `VITE_API_BASE` empty, the frontend makes relative requests (`/api/dashboard`, `/api/events`, etc.) to the same origin, requiring zero cross-origin configuration in production.
 - **Content Security Policy:** Helmet CSP allows `'self'`, inline styles (`'unsafe-inline'` for AG Grid/AG Charts), and Google Fonts (`https://fonts.googleapis.com` and `https://fonts.gstatic.com`).
 
+---
+
+## 8. Troubleshooting: Production Static Assets 500 & Blank Page Fix
+
+### Root Cause
+In production (`NODE_ENV=production`) with `WEB_ORIGIN=*` in `render.yaml`:
+1. Vite emits `crossorigin` attributes on `<script type="module" crossorigin>` and `<link rel="stylesheet" crossorigin>` tags in `index.html`, causing the browser to attach an `Origin: https://<host>` header when fetching `/assets/*.js` and `/assets/*.css` (even on the same origin). Direct browser tab navigation omits `Origin`.
+2. `@fastify/cors` in `apps/api/src/app.ts` previously checked `origin === env.WEB_ORIGIN` literally (`"https://..." === "*"` evaluated to `false`) and passed `new Error('Not allowed by CORS')` without a `statusCode` to Fastify's `setErrorHandler`, which masked it as an HTTP **500 `application/json`** (`INTERNAL_ERROR`) response instead of serving the CSS/JS asset.
+
+### Fixes Applied
+- **CORS Delegator (`apps/api/src/app.ts`):** Updated `@fastify/cors` to use a `delegator` that allows `WEB_ORIGIN="*"`, comma-separated `WEB_ORIGIN` entries, and any same-origin request where `new URL(origin).host` matches `x-forwarded-host` or `host`, and rejects unknown cross-origin callers cleanly (`{ origin: false }`) rather than throwing a 500 error.
+- **Rate Limiter Hardening (`apps/api/src/app.ts`):** Exempted all non-POST requests (all `GET` routes, `/assets/*`, `/health`, `/api/events`) from `@fastify/rate-limit`, scoped rate limits to `POST` routes (60/min general, 30/min on `/api/demo/*` with separate key buckets), and ensured `429 RATE_LIMIT_EXCEEDED` JSON responses.
+- **Static Caching & 500 Logging (`apps/api/src/app.ts`):** Configured `etag: true`, `lastModified: true`, `no-cache` for `.html`, immutable 1-year caching for hashed `/assets/*`, and structured Pino error logs (`reqId`, `url`, `origin`, `errorMessage`) for any 500 response.
+- **Root Error Boundary (`apps/web/src/components/RootErrorBoundary.tsx`, `apps/web/src/main.tsx`):** Added a React `RootErrorBoundary` and startup error fallback displaying the error message and a **Reload** button instead of a blank screen if startup fails.
+
 
