@@ -1,0 +1,86 @@
+/**
+ * Currency and date formatting utilities.
+ * Follows AGENT_RULES.md:
+ * - Integer cents only; no floating point arithmetic.
+ * - Dates parsed and formatted in UTC to prevent timezone off-by-one errors.
+ */
+
+/**
+ * Formats integer cents to USD currency string.
+ * Uses integer math only: sign, Math.trunc(abs / 100), abs % 100.
+ * Intl.NumberFormat is used only for thousands grouping on whole dollars.
+ *
+ * Examples:
+ *   formatUsd(0) => "$0.00"
+ *   formatUsd(100) => "$1.00"
+ *   formatUsd(-150) => "-$1.50"
+ *   formatUsd(123456789) => "$1,234,567.89"
+ */
+export function formatUsd(cents: number): string {
+  const isNegative = cents < 0;
+  const abs = Math.abs(cents);
+  const dollars = Math.trunc(abs / 100);
+  const rem = abs % 100;
+
+  const dollarsFormatted = new Intl.NumberFormat('en-US').format(dollars);
+  const centsFormatted = rem.toString().padStart(2, '0');
+
+  return `${isNegative ? '-' : ''}$${dollarsFormatted}.${centsFormatted}`;
+}
+
+/**
+ * Parses an ISO YYYY-MM-DD date in UTC.
+ */
+function parseUtcDate(isoDate: string): { date: Date; year: number; month: number; day: number } {
+  const parts = isoDate.split('-');
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+    throw new Error(`Invalid ISO date format: ${isoDate}`);
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return { date, year, month, day };
+}
+
+/**
+ * Formats an ISO date into e.g. "Fri 6 Nov".
+ * Parsed in UTC to avoid off-by-one errors across timezones.
+ */
+export function formatDate(isoDate: string): string {
+  const { date, day } = parseUtcDate(isoDate);
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short' }).format(date);
+  const month = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short' }).format(date);
+  return `${weekday} ${day} ${month}`;
+}
+
+/**
+ * Formats an ISO date into e.g. "Nov 6".
+ */
+export function formatDateShort(isoDate: string): string {
+  const { date, day } = parseUtcDate(isoDate);
+  const month = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short' }).format(date);
+  return `${month} ${day}`;
+}
+
+/**
+ * Humanizes an uppercase status code (e.g. "AWAITING_APPROVAL" => "Awaiting Approval").
+ * Per Rule 4: Chips and pills render invoice.status / action.status verbatim (humanised), never inferred.
+ */
+export function humanizeStatus(status: string): string {
+  if (!status) return '';
+  return status
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+/**
+ * Converts a fractional ratio (0..1) into an integer percentage (0..100).
+ */
+export function riskToPercent(risk: number): number {
+  return Math.round(risk * 100);
+}
+
