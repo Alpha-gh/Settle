@@ -5,7 +5,13 @@ import { getEngine } from './engine.js';
 import { StubAgent } from './stubs.js';
 
 let agentInstance: AgentPort | null = null;
-let agentRunInProgress = false;
+
+export interface AgentRunLockState {
+  startedAtMs: number;
+  startedAt: string;
+}
+
+let agentRunLock: AgentRunLockState | null = null;
 
 export interface LlmErrorInfo {
   provider: string;
@@ -39,20 +45,79 @@ export function setAgentInstance(agent: AgentPort | null): void {
   agentInstance = agent;
 }
 
-export function acquireAgentRunLock(): boolean {
-  if (agentRunInProgress) {
-    return false;
+export type AcquireLockResult =
+  | { acquired: true; clearedStale?: boolean; staleAgeSeconds?: number }
+  | { acquired: false; startedAt: string; ageSeconds: number };
+
+export function acquireAgentRunLock(logger?: {
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+}): AcquireLockResult {
+  const nowMs = Date.now();
+  const ttlSeconds = getEnv().AGENT_RUN_LOCK_TTL_SECONDS;
+  const ttlMs = ttlSeconds * 1000;
+
+  if (agentRunLock) {
+    const ageMs = Math.max(0, nowMs - agentRunLock.startedAtMs);
+    const ageSeconds = Math.floor(ageMs / 1000);
+    if (ageMs >= ttlMs) {
+      const staleStartedAt = agentRunLock.startedAt;
+      const warnMsg = `Releasing stale agent run lock (age=${ageSeconds}s >= ttl=${ttlSeconds}s, startedAt=${staleStartedAt})`;
+      if (logger) {
+        logger.warn({ ageSeconds, ttlSeconds, startedAt: staleStartedAt }, warnMsg);
+      } else {
+        console.warn(`[agent] ${warnMsg}`);
+      }
+      agentRunLock = {
+        startedAtMs: nowMs,
+        startedAt: new Date(nowMs).toISOString(),
+      };
+      return { acquired: true, clearedStale: true, staleAgeSeconds: ageSeconds };
+    }
+    return {
+      acquired: false,
+      startedAt: agentRunLock.startedAt,
+      ageSeconds,
+    };
   }
-  agentRunInProgress = true;
-  return true;
+
+  agentRunLock = {
+    startedAtMs: nowMs,
+    startedAt: new Date(nowMs).toISOString(),
+  };
+  return { acquired: true };
+}
+
+export function getAgentRunStatus(): {
+  running: boolean;
+  startedAt: string | null;
+  ageSeconds: number;
+} {
+  if (!agentRunLock) {
+    return { running: false, startedAt: null, ageSeconds: 0 };
+  }
+  const nowMs = Date.now();
+  const ageMs = Math.max(0, nowMs - agentRunLock.startedAtMs);
+  const ageSeconds = Math.floor(ageMs / 1000);
+  return {
+    running: true,
+    startedAt: agentRunLock.startedAt,
+    ageSeconds,
+  };
 }
 
 export function releaseAgentRunLock(): void {
-  agentRunInProgress = false;
+  agentRunLock = null;
 }
 
 export function resetAgentRunLock(): void {
-  agentRunInProgress = false;
+  agentRunLock = null;
+}
+
+export function setAgentRunLockForTest(startedAtMs: number): void {
+  agentRunLock = {
+    startedAtMs,
+    startedAt: new Date(startedAtMs).toISOString(),
+  };
 }
 
 export interface Clock {

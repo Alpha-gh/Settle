@@ -99,6 +99,10 @@ export const EnvSchema = z
       .transform((val) => (typeof val === 'boolean' ? val : val !== 'false'))
       .default(true),
     DEMO_TODAY: z.string().default('2026-11-05'),
+    AGENT_RUN_LOCK_TTL_SECONDS: z.coerce.number().int().positive().default(150),
+    AGENT_RUN_MAX_SECONDS: z.coerce.number().int().positive().default(90),
+    LLM_CALL_TIMEOUT_SECONDS: z.coerce.number().positive().default(12),
+    AGENT_LLM_MAX_CALLS_PER_RUN: z.coerce.number().int().min(0).default(4),
     LLM_PROVIDER: z.string().optional(),
     LLM_MODEL: z.string().optional(),
     GEMINI_API_KEY: z.string().optional(),

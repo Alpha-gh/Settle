@@ -36,6 +36,7 @@ import {
   getAgent,
   acquireAgentRunLock,
   releaseAgentRunLock,
+  getAgentRunStatus,
   getLastLlmError,
   clearLastLlmError,
   getActiveLlm,
@@ -452,13 +453,20 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return invoiceRepo.list();
   });
 
-  // 3. Agent Run Cycle
+  // 3. Agent Run Status & Cycle
+  app.get('/api/agent/status', async () => {
+    return getAgentRunStatus();
+  });
+
   app.post('/api/agent/run', async (request, reply) => {
-    if (!acquireAgentRunLock()) {
+    const lockResult = acquireAgentRunLock(request.log);
+    if (!lockResult.acquired) {
       return reply.status(409).send({
         error: {
           code: 'AGENT_RUN_IN_PROGRESS',
           message: 'An agent run is currently in progress',
+          startedAt: lockResult.startedAt,
+          ageSeconds: lockResult.ageSeconds,
         },
       });
     }
