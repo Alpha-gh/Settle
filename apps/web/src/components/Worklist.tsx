@@ -15,7 +15,7 @@ import 'ag-grid-community/styles/ag-theme-quartz.css';
 import { useSnapshot, useActions } from '../api/queries';
 import { selectWorklistRows, type WorklistRow } from '../api/selectors';
 import { useSelectedAction } from '../state/selection';
-import { formatUsd, formatDateShort, humanizeStatus, riskToPercent } from '../lib/format';
+import { formatUsd, formatDateShort, humanizeStatus, riskToPercent, formatActionReason } from '../lib/format';
 import { TEST_IDS } from '../testids';
 import { ActionDrawer } from './ActionDrawer';
 import { mockEventBus } from '../api/bus';
@@ -125,11 +125,18 @@ const ProposedActionRenderer = React.memo(({ data }: CellRendererParams) => {
     colorClasses = 'bg-red-50 text-red-900 border border-red-300';
   }
 
+  const { cleanReason } = formatActionReason(action);
+
   return (
-    <div className="flex items-center h-full">
-      <span className={`px-2 py-0.5 rounded text-xs font-medium truncate ${colorClasses}`}>
+    <div className="flex items-center gap-2 h-full overflow-hidden" title={cleanReason}>
+      <span className={`px-2 py-0.5 rounded text-xs font-medium shrink-0 ${colorClasses}`}>
         {humanizeStatus(action.type)} &mdash; {humanizeStatus(action.status)}
       </span>
+      {cleanReason && (
+        <span className="text-xs text-muted truncate">
+          {cleanReason}
+        </span>
+      )}
     </div>
   );
 });

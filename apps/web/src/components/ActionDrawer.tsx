@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import type { ActionRecord, Invoice, Payer, Cents } from '@settle/shared';
+import type { EnrichedActionRecord } from '../api/schemas';
 import { TEST_IDS } from '../testids';
-import { formatUsd, formatDate, humanizeStatus } from '../lib/format';
+import { formatUsd, formatDate, humanizeStatus, formatActionReason } from '../lib/format';
 import { useApproveAction, useRejectAction, useRunAgent } from '../api/queries';
 import { humanizeApiError } from '../api/client';
 import { BalanceChart } from './BalanceChart';
@@ -10,7 +11,7 @@ import { BalanceChart } from './BalanceChart';
 export interface ActionDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  action?: ActionRecord;
+  action?: ActionRecord | EnrichedActionRecord;
   invoice?: Invoice;
   payer?: Payer;
   reserve?: Cents;
@@ -182,22 +183,32 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
             </div>
 
             {/* Agent Reason: verbatim reason labelled "Why Settle proposes this" */}
-            <section
-              data-testid={TEST_IDS.drawerReason}
-              aria-labelledby="agent-reason-label"
-              className="space-y-1.5 bg-slate-50 border border-border rounded p-4"
-            >
-              <div
-                id="agent-reason-label"
-                className="text-xs font-semibold text-muted uppercase tracking-wider"
-              >
-                Why Settle proposes this
-              </div>
-              <p className="text-sm text-ink leading-relaxed">
-                {action?.reason ??
-                  'No proposed action. This invoice was evaluated without active recovery required.'}
-              </p>
-            </section>
+            {(() => {
+              const { cleanReason, provenanceCaption } = formatActionReason(action);
+              return (
+                <section
+                  data-testid={TEST_IDS.drawerReason}
+                  aria-labelledby="agent-reason-label"
+                  className="space-y-1.5 bg-slate-50 border border-border rounded p-4"
+                >
+                  <div
+                    id="agent-reason-label"
+                    className="text-xs font-semibold text-muted uppercase tracking-wider"
+                  >
+                    Why Settle proposes this
+                  </div>
+                  <p className="text-sm text-ink leading-relaxed">{cleanReason}</p>
+                  {action && (
+                    <div
+                      data-testid="drawer-reason-provenance"
+                      className="text-xs text-muted pt-1"
+                    >
+                      {provenanceCaption}
+                    </div>
+                  )}
+                </section>
+              );
+            })()}
 
             {/* Option Details */}
             {action && (

@@ -84,3 +84,66 @@ export function riskToPercent(risk: number): number {
   return Math.round(risk * 100);
 }
 
+export interface FormattedActionReason {
+  cleanReason: string;
+  provenanceCaption: string;
+}
+
+/**
+ * Formats action reason and extracts LLM/rules provenance.
+ * - Prefers action.reasonDisplay when present.
+ * - If only action.reason is present and ends with "[via ...]", strips the tag.
+ * - Determines provenance: "Written by <provider/model>" when path=llm, otherwise "Written by rules".
+ */
+export function formatActionReason(action?: {
+  reason?: string;
+  reasonDisplay?: string;
+  reasonSource?: string;
+}): FormattedActionReason {
+  if (!action) {
+    return {
+      cleanReason: 'No proposed action. This invoice was evaluated without active recovery required.',
+      provenanceCaption: 'Written by rules',
+    };
+  }
+
+  const rawReason = action.reason?.trim() ?? '';
+  let cleanReason = action.reasonDisplay?.trim() || '';
+
+  if (!cleanReason) {
+    cleanReason = rawReason.replace(/\s*\[via\s+[^\]]+\]\s*$/, '').trim();
+    if (!cleanReason) {
+      cleanReason = rawReason;
+    }
+  }
+
+  const source = action.reasonSource?.trim() || '';
+  const tagMatch = rawReason.match(/\[via\s+([^\]]+)\]/);
+  const tagContent = tagMatch ? tagMatch[1] : '';
+
+  const provenanceStr = source || tagContent;
+  let path: string | undefined;
+  let provider: string | undefined;
+  let model: string | undefined;
+
+  if (provenanceStr) {
+    const pathMatch = provenanceStr.match(/path=([^;\]\s]+)/);
+    const providerMatch = provenanceStr.match(/provider=([^;\]\s]+)/);
+    const modelMatch = provenanceStr.match(/model=([^;\]\s]+)/);
+
+    if (pathMatch) path = pathMatch[1];
+    if (providerMatch) provider = providerMatch[1];
+    if (modelMatch) model = modelMatch[1];
+  }
+
+  let provenanceCaption: string;
+  if (path === 'llm' && (provider || model)) {
+    const target = provider && model ? `${provider}/${model}` : (model || provider);
+    provenanceCaption = `Written by ${target}`;
+  } else {
+    provenanceCaption = 'Written by rules';
+  }
+
+  return { cleanReason, provenanceCaption };
+}
+

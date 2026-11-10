@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ActionDrawer } from './ActionDrawer';
 import { TEST_IDS } from '../testids';
-import type { ActionRecord, Invoice, Payer, ActionStatus } from '@settle/shared';
+import type { Invoice, Payer, ActionStatus } from '@settle/shared';
+import type { EnrichedActionRecord } from '../api/schemas';
 import { mockScenarioComparison } from '../mocks/fixtures/forecast';
 
 function createWrapper() {
@@ -41,7 +42,7 @@ const mockPayer: Payer = {
   latenessRisk: 0.4,
 };
 
-const createMockAction = (status: ActionStatus, overrides: Partial<ActionRecord> = {}): ActionRecord => ({
+const createMockAction = (status: ActionStatus, overrides: Partial<EnrichedActionRecord> = {}): EnrichedActionRecord => ({
   id: 'act_101',
   invoiceId: 'inv_101',
   type: 'OFFER_DISCOUNT',
@@ -351,6 +352,38 @@ describe('ActionDrawer Component', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('displays reasonDisplay when present and renders LLM provenance', () => {
+    const action = createMockAction('AWAITING_APPROVAL', {
+      reason: 'Raw reason [via provider=gemini; model=gemini-1.5-flash; path=llm]',
+      reasonDisplay: 'Human friendly proposal text',
+      reasonSource: '[via provider=gemini; model=gemini-1.5-flash; path=llm]',
+    });
+
+    render(
+      <ActionDrawer isOpen={true} onClose={vi.fn()} action={action} invoice={mockInvoice} />,
+      { wrapper: createWrapper() },
+    );
+
+    const reasonSection = screen.getByTestId(TEST_IDS.drawerReason);
+    expect(within(reasonSection).getByText('Human friendly proposal text')).toBeInTheDocument();
+    expect(within(reasonSection).getByText('Written by gemini/gemini-1.5-flash')).toBeInTheDocument();
+  });
+
+  it('strips [via ...] tag and shows "Written by rules" when path is fallback', () => {
+    const action = createMockAction('AWAITING_APPROVAL', {
+      reason: 'Rule proposal for cashflow [via provider=gemini; model=gemini-1.5-flash; path=fallback]',
+    });
+
+    render(
+      <ActionDrawer isOpen={true} onClose={vi.fn()} action={action} invoice={mockInvoice} />,
+      { wrapper: createWrapper() },
+    );
+
+    const reasonSection = screen.getByTestId(TEST_IDS.drawerReason);
+    expect(within(reasonSection).getByText('Rule proposal for cashflow')).toBeInTheDocument();
+    expect(within(reasonSection).getByText('Written by rules')).toBeInTheDocument();
   });
 });
 

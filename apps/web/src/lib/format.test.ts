@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatUsd, formatDate, formatDateShort, humanizeStatus } from './format';
+import { formatUsd, formatDate, formatDateShort, humanizeStatus, formatActionReason } from './format';
 
 describe('formatUsd', () => {
   it('formats zero cents', () => {
@@ -64,6 +64,56 @@ describe('humanizeStatus', () => {
     expect(humanizeStatus('FAILED')).toBe('Failed');
     expect(humanizeStatus('SENT')).toBe('Sent');
     expect(humanizeStatus('PAID')).toBe('Paid');
+  });
+});
+
+describe('formatActionReason', () => {
+  it('prefers reasonDisplay when present and extracts provenance from reasonSource', () => {
+    const res = formatActionReason({
+      reason: 'Raw reason with [via provider=gemini; model=gemini-1.5-flash; path=llm]',
+      reasonDisplay: 'Clean natural language reason',
+      reasonSource: '[via provider=gemini; model=gemini-1.5-flash; path=llm]',
+    });
+    expect(res.cleanReason).toBe('Clean natural language reason');
+    expect(res.provenanceCaption).toBe('Written by gemini/gemini-1.5-flash');
+  });
+
+  it('strips [via ...] tag from reason when reasonDisplay is absent', () => {
+    const res = formatActionReason({
+      reason: 'Accelerates payment to close shortfall [via provider=gemini; model=gemini-2.0-flash; path=llm]',
+    });
+    expect(res.cleanReason).toBe('Accelerates payment to close shortfall');
+    expect(res.provenanceCaption).toBe('Written by gemini/gemini-2.0-flash');
+  });
+
+  it('shows "Written by rules" when path is fallback, rule, or missing', () => {
+    expect(
+      formatActionReason({
+        reason: 'Rule-based proposal [via provider=gemini; model=gemini-1.5-flash; path=fallback]',
+      }),
+    ).toEqual({
+      cleanReason: 'Rule-based proposal',
+      provenanceCaption: 'Written by rules',
+    });
+
+    expect(
+      formatActionReason({
+        reason: 'Plain proposal without tag',
+      }),
+    ).toEqual({
+      cleanReason: 'Plain proposal without tag',
+      provenanceCaption: 'Written by rules',
+    });
+
+    expect(
+      formatActionReason({
+        reason: 'Proposal',
+        reasonSource: '[via path=rule]',
+      }),
+    ).toEqual({
+      cleanReason: 'Proposal',
+      provenanceCaption: 'Written by rules',
+    });
   });
 });
 
