@@ -43,9 +43,6 @@ export const AppShell: React.FC = () => {
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
             <span className="text-xl font-bold tracking-tight text-ink">Settle</span>
-            <span className="text-xs uppercase font-medium text-muted tracking-wider px-1.5 py-0.5 bg-slate-100 rounded border border-border">
-              Sys 4
-            </span>
           </div>
           <span className="text-sm font-medium text-muted border-l border-border pl-6">
             {snapshot?.business.name ?? 'Settle'}
