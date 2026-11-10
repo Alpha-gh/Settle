@@ -65,7 +65,7 @@ describe('RunSettleButton Component', () => {
 
     const button = screen.getByTestId(TEST_IDS.runSettle);
     expect(button).toBeDisabled();
-    expect(button).toHaveTextContent('Running Settle');
+    expect(button).toHaveTextContent('Settle is working...');
 
     const progress = screen.getByTestId(TEST_IDS.runSettleProgress);
     expect(progress).toBeInTheDocument();

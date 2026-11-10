@@ -345,6 +345,15 @@ export const dashboardResponseSchema = z.object({
 
 export type DashboardResponse = z.infer<typeof dashboardResponseSchema>;
 
+// 16. AgentStatusResponse
+export const agentStatusSchema = z.object({
+  running: z.boolean(),
+  startedAt: z.string().nullable(),
+  ageSeconds: z.number(),
+});
+
+export type AgentStatus = z.infer<typeof agentStatusSchema>;
+
 // Suppress unused variable warnings for compile-time assertions
 void _assertBusiness;
 void _assertPayer;

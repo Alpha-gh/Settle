@@ -120,6 +120,8 @@ export const SseProvider: React.FC<SseProviderProps> = ({ children }) => {
             }
             return [...old, updatedAction];
           });
+          queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
+          queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
           break;
         }
 

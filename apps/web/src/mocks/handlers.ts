@@ -53,6 +53,15 @@ export const handlers = [
     return HttpResponse.json(result);
   }),
 
+  // 5b. GET /api/agent/status
+  http.get('/api/agent/status', async () => {
+    return HttpResponse.json({
+      running: false,
+      startedAt: null,
+      ageSeconds: 0,
+    });
+  }),
+
   // 6. POST /api/actions/:id/approve
   http.post('/api/actions/:id/approve', async ({ params, request }) => {
     await delay(getLatency());
