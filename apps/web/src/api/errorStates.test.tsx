@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
@@ -23,6 +23,10 @@ describe('Error-with-Retry States Verification', () => {
     });
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   const renderWithClient = (ui: React.ReactElement) =>
     render(
       <QueryClientProvider client={queryClient}>
@@ -30,10 +34,10 @@ describe('Error-with-Retry States Verification', () => {
       </QueryClientProvider>,
     );
 
-  it('renders error state with retry on /api/kpis 500 failure and recovers on retry', async () => {
+  it('renders error state with retry on /api/dashboard (kpis) 500 failure and recovers on retry', async () => {
     // 1. Force 500
     server.use(
-      http.get('/api/kpis', () => {
+      http.get('/api/dashboard', () => {
         return new HttpResponse(null, { status: 500, statusText: 'Internal Server Error' });
       }),
     );

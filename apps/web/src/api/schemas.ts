@@ -220,6 +220,8 @@ export const actionRecordSchema = z.object({
   type: actionTypeSchema,
   params: actionParamsSchema,
   reason: z.string(),
+  reasonDisplay: z.string().optional(),
+  reasonSource: z.string().optional(),
   simulation: scenarioComparisonSchema.optional(),
   policy: policyVerdictSchema,
   status: actionStatusSchema,
@@ -230,7 +232,9 @@ export const actionRecordSchema = z.object({
   error: z.string().optional(),
 }) satisfies z.ZodType<ActionRecord>;
 
-const _assertActionRecord: AssertEqual<z.infer<typeof actionRecordSchema>, ActionRecord> = true;
+export type EnrichedActionRecord = z.infer<typeof actionRecordSchema>;
+
+const _assertActionRecord: z.infer<typeof actionRecordSchema> extends ActionRecord ? true : false = true;
 
 // 9. Kpis
 export const kpisSchema = z.object({
@@ -325,6 +329,21 @@ export const sseEventSchema = z.discriminatedUnion('type', [
 ]) satisfies z.ZodType<SseEvent>;
 
 const _assertSseEvent: AssertEqual<z.infer<typeof sseEventSchema>, SseEvent> = true;
+
+// 15. DashboardResponse
+export const dashboardResponseSchema = z.object({
+  business: businessSchema,
+  kpis: kpisSchema,
+  forecast: forecastResultSchema,
+  invoices: z.array(invoiceSchema),
+  payers: z.array(payerSchema),
+  obligations: z.array(obligationSchema),
+  recentActions: z.array(actionRecordSchema).optional(),
+  auditLog: z.array(auditEventSchema).optional(),
+  policy: policySchema.optional(),
+});
+
+export type DashboardResponse = z.infer<typeof dashboardResponseSchema>;
 
 // Suppress unused variable warnings for compile-time assertions
 void _assertBusiness;

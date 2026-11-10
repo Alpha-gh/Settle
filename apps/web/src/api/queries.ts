@@ -13,14 +13,13 @@ import type {
 import { ENDPOINTS } from './endpoints';
 import { apiRequest } from './client';
 import {
-  snapshotSchema,
-  forecastResultSchema,
-  kpisSchema,
+  dashboardResponseSchema,
   actionRecordSchema,
   auditEventSchema,
   policySchema,
   agentRunResultSchema,
   chatAnswerSchema,
+  type DashboardResponse,
 } from './schemas';
 import {
   impactSummarySchema,
@@ -29,33 +28,57 @@ import {
 } from './impactAdapter';
 
 export const QUERY_KEYS = {
-  snapshot: ['snapshot'] as const,
-  forecast: ['forecast'] as const,
-  kpis: ['kpis'] as const,
+  dashboard: ['dashboard'] as const,
+  snapshot: ['dashboard'] as const,
+  forecast: ['dashboard'] as const,
+  kpis: ['dashboard'] as const,
   actions: ['actions'] as const,
   audit: ['audit'] as const,
   policy: ['policy'] as const,
   impact: ['impact'] as const,
 };
 
+export function useDashboard() {
+  return useQuery<DashboardResponse>({
+    queryKey: QUERY_KEYS.dashboard,
+    queryFn: () => apiRequest(ENDPOINTS.dashboard(), dashboardResponseSchema),
+  });
+}
+
 export function useSnapshot() {
-  return useQuery<Snapshot>({
-    queryKey: QUERY_KEYS.snapshot,
-    queryFn: () => apiRequest(ENDPOINTS.snapshot(), snapshotSchema),
+  return useQuery<DashboardResponse, Error, Snapshot>({
+    queryKey: QUERY_KEYS.dashboard,
+    queryFn: () => apiRequest(ENDPOINTS.dashboard(), dashboardResponseSchema),
+    select: (dashboard): Snapshot => ({
+      business: dashboard.business,
+      payers: dashboard.payers,
+      invoices: dashboard.invoices,
+      obligations: dashboard.obligations,
+      policy: dashboard.policy ?? {
+        maxDiscountPct: 0,
+        maxInstalments: 1,
+        autoApproveMaxAmount: 0,
+        requireApprovalFor: [],
+        quietHours: { startHour: 0, endHour: 0 },
+        maxRemindersPerInvoicePerWeek: 0,
+      },
+    }),
   });
 }
 
 export function useForecast() {
-  return useQuery<ForecastResult>({
-    queryKey: QUERY_KEYS.forecast,
-    queryFn: () => apiRequest(ENDPOINTS.forecast(), forecastResultSchema),
+  return useQuery<DashboardResponse, Error, ForecastResult>({
+    queryKey: QUERY_KEYS.dashboard,
+    queryFn: () => apiRequest(ENDPOINTS.dashboard(), dashboardResponseSchema),
+    select: (dashboard) => dashboard.forecast,
   });
 }
 
 export function useKpis() {
-  return useQuery<Kpis>({
-    queryKey: QUERY_KEYS.kpis,
-    queryFn: () => apiRequest(ENDPOINTS.kpis(), kpisSchema),
+  return useQuery<DashboardResponse, Error, Kpis>({
+    queryKey: QUERY_KEYS.dashboard,
+    queryFn: () => apiRequest(ENDPOINTS.dashboard(), dashboardResponseSchema),
+    select: (dashboard) => dashboard.kpis,
   });
 }
 
@@ -104,9 +127,10 @@ export function useImpact() {
 export function useRunAgent() {
   const queryClient = useQueryClient();
   return useMutation<AgentRunResult, Error>({
-    mutationFn: () => apiRequest(ENDPOINTS.agentRun(), agentRunResultSchema, { method: 'POST' }),
+    mutationFn: () => apiRequest(ENDPOINTS.agentRun(), agentRunResultSchema, { method: 'POST', body: '{}' }),
     onSuccess: (data) => {
       queryClient.setQueryData(QUERY_KEYS.actions, data.actions);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.impact });
@@ -126,9 +150,8 @@ export function useApproveAction() {
       queryClient.setQueryData<ActionRecord[]>(QUERY_KEYS.actions, (old = []) =>
         old.map((a) => (a.id === updated.id ? updated : a)),
       );
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.forecast });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
     },
   });
@@ -147,9 +170,8 @@ export function useRejectAction() {
       queryClient.setQueryData<ActionRecord[]>(QUERY_KEYS.actions, (old = []) =>
         old.map((a) => (a.id === updated.id ? updated : a)),
       );
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.forecast });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
     },
   });
@@ -160,16 +182,16 @@ export function useRetryAction() {
   const queryClient = useQueryClient();
   return useMutation<ActionRecord, Error, { id: string }>({
     mutationFn: ({ id }) =>
-      apiRequest(ENDPOINTS.actionRetry(id), actionRecordSchema, {
+      apiRequest(ENDPOINTS.actionApprove(id), actionRecordSchema, {
         method: 'POST',
+        body: '{}',
       }),
     onSuccess: (updated) => {
       queryClient.setQueryData<ActionRecord[]>(QUERY_KEYS.actions, (old = []) =>
         old.map((a) => (a.id === updated.id ? updated : a)),
       );
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.forecast });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
     },
   });
@@ -186,7 +208,7 @@ export function useUpdatePolicy() {
       }),
     onSuccess: (updated) => {
       queryClient.setQueryData(QUERY_KEYS.policy, updated);
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.snapshot });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
     },
   });
 }
@@ -208,7 +230,7 @@ export function useDemoReset() {
       apiRequest(
         ENDPOINTS.demoReset(),
         z.object({ status: z.string() }),
-        { method: 'POST' },
+        { method: 'POST', body: '{}' },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries();
@@ -231,12 +253,11 @@ export function useDemoSimulatePayment() {
           invoice: z.unknown().optional(),
           cashBalance: z.number().int().optional(),
         }),
-        { method: 'POST' },
+        { method: 'POST', body: '{}' },
       ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.snapshot });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.forecast });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.impact });
     },

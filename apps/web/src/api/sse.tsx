@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { SseEvent, Snapshot, ActionRecord, AuditEvent, ForecastResult } from '@settle/shared';
-import { sseEventSchema } from './schemas';
+import type { SseEvent, ActionRecord, AuditEvent } from '@settle/shared';
+import { sseEventSchema, type DashboardResponse } from './schemas';
 import { mockEventBus } from './bus';
 import { QUERY_KEYS } from './queries';
 import { ENDPOINTS } from './endpoints';
@@ -98,7 +98,7 @@ export const SseProvider: React.FC<SseProviderProps> = ({ children }) => {
       switch (event.type) {
         case 'invoice.updated': {
           const updatedInvoice = event.payload;
-          queryClient.setQueryData<Snapshot>(QUERY_KEYS.snapshot, (old) => {
+          queryClient.setQueryData<DashboardResponse>(QUERY_KEYS.dashboard, (old) => {
             if (!old) return old;
             return {
               ...old,
@@ -133,9 +133,15 @@ export const SseProvider: React.FC<SseProviderProps> = ({ children }) => {
 
         case 'forecast.updated': {
           const updatedForecast = event.payload;
-          queryClient.setQueryData<ForecastResult>(QUERY_KEYS.forecast, updatedForecast);
+          queryClient.setQueryData<DashboardResponse>(QUERY_KEYS.dashboard, (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              forecast: updatedForecast,
+            };
+          });
           // Invalidate KPIs and impact when forecast updates
-          queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kpis });
+          queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
           queryClient.invalidateQueries({ queryKey: QUERY_KEYS.impact });
           break;
         }

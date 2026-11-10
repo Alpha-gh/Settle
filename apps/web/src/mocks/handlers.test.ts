@@ -5,6 +5,7 @@ import {
   snapshotSchema,
   forecastResultSchema,
   kpisSchema,
+  dashboardResponseSchema,
   actionRecordSchema,
   auditEventSchema,
   policySchema,
@@ -17,6 +18,12 @@ import { CANNED_CHAT_PROMPTS } from './fixtures/chat';
 describe('MSW State and Handlers Schema Compliance', () => {
   beforeEach(() => {
     mockState.reset();
+  });
+
+  it('GET /api/dashboard returns data conforming to dashboardResponseSchema', () => {
+    const data = mockState.getDashboard();
+    const result = dashboardResponseSchema.safeParse(data);
+    expect(result.success).toBe(true);
   });
 
   it('GET /api/snapshot returns data conforming to snapshotSchema', () => {

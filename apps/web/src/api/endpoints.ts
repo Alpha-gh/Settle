@@ -4,9 +4,7 @@
  */
 
 export const ENDPOINTS = {
-  snapshot: () => '/api/snapshot',
-  forecast: () => '/api/forecast',
-  kpis: () => '/api/kpis',
+  dashboard: () => '/api/dashboard',
   actions: () => '/api/actions',
   agentRun: () => '/api/agent/run',
   actionApprove: (id: string) => `/api/actions/${encodeURIComponent(id)}/approve`,

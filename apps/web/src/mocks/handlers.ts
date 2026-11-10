@@ -13,7 +13,15 @@ const getLatency = (): number => {
 };
 
 export const handlers = [
-  // 1. GET /api/snapshot
+  // 0. GET /api/dashboard
+  http.get('/api/dashboard', async ({ request }) => {
+    await delay(getLatency());
+    const url = new URL(request.url);
+    const use200 = url.searchParams.get('mockInvoices') === '200';
+    return HttpResponse.json(mockState.getDashboard(use200));
+  }),
+
+  // 1. GET /api/snapshot (legacy/test compatibility)
   http.get('/api/snapshot', async ({ request }) => {
     await delay(getLatency());
     const url = new URL(request.url);

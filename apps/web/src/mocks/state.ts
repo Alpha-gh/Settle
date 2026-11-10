@@ -27,6 +27,7 @@ import { mockAgentActions } from './fixtures/actions';
 import { cannedChatAnswers, fallbackChatAnswer } from './fixtures/chat';
 import { generateDeterministicInvoices } from './fixtures/deterministicInvoices';
 import { mockEventBus } from '../api/bus';
+import type { DashboardResponse } from '../api/schemas';
 
 export class MockStateMachine {
   business: Business = { ...mockBusiness };
@@ -61,6 +62,20 @@ export class MockStateMachine {
       payers: this.payers,
       invoices: use200Invoices ? generateDeterministicInvoices(200) : this.invoices,
       obligations: this.obligations,
+      policy: this.policy,
+    };
+  }
+
+  getDashboard(use200Invoices = false): DashboardResponse {
+    return {
+      business: this.business,
+      kpis: this.kpis,
+      forecast: this.forecast,
+      invoices: use200Invoices ? generateDeterministicInvoices(200) : this.invoices,
+      payers: this.payers,
+      obligations: this.obligations,
+      recentActions: this.actions.slice(0, 10),
+      auditLog: this.audit.slice(0, 50),
       policy: this.policy,
     };
   }
