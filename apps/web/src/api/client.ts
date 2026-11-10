@@ -22,6 +22,44 @@ export class ApiHttpError extends ApiError {
   }
 }
 
+export function humanizeApiError(err: unknown): string {
+  if (err instanceof ApiHttpError) {
+    const body = err.responseBody;
+    const errorCode =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? (body as { error?: { code?: string; message?: string } }).error?.code
+        : undefined;
+    const apiMsg =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? (body as { error?: { code?: string; message?: string } }).error?.message
+        : undefined;
+
+    if (err.status === 409) {
+      if (errorCode === 'ACTION_NOT_OPEN') return 'This action has already been resolved or closed.';
+      if (errorCode === 'NOT_PROVISIONED') return 'This invoice is not set up in PayPal yet.';
+      if (errorCode === 'AGENT_RUN_IN_PROGRESS') return 'Another agent run is currently in progress. Please wait a moment.';
+      if (errorCode === 'NOTHING_DUE') return 'This invoice has already been fully paid.';
+      if (apiMsg && typeof apiMsg === 'string' && !apiMsg.startsWith('{')) return apiMsg;
+    }
+    if (err.status === 502) {
+      if (apiMsg && typeof apiMsg === 'string' && !apiMsg.startsWith('{')) return apiMsg;
+      if (err.message && !err.message.startsWith('{')) return err.message;
+      return 'PayPal service is currently unavailable. Please try again.';
+    }
+    if (apiMsg && typeof apiMsg === 'string' && !apiMsg.startsWith('{')) {
+      return apiMsg;
+    }
+    if (err.message && !err.message.startsWith('{')) {
+      return err.message;
+    }
+    return 'An unexpected error occurred. Please try again.';
+  }
+  if (err instanceof Error && err.message && !err.message.startsWith('{')) {
+    return err.message;
+  }
+  return 'An unexpected error occurred. Please try again.';
+}
+
 export class ApiSchemaError extends ApiError {
   readonly issues: z.ZodIssue[];
   readonly rawData: unknown;

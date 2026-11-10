@@ -262,5 +262,95 @@ describe('ActionDrawer Component', () => {
     fireEvent.click(screen.getByTestId(TEST_IDS.drawerClose));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('FAILED status shows "Run Settle again" button and explanation sentence', () => {
+    const action = createMockAction('FAILED', {
+      error: 'PayPal API connection timed out',
+    });
+    render(
+      <ActionDrawer isOpen={true} onClose={vi.fn()} action={action} invoice={mockInvoice} />,
+      { wrapper: createWrapper() },
+    );
+
+    const retryBtn = screen.getByTestId(TEST_IDS.retryButton);
+    expect(retryBtn).toHaveTextContent('Run Settle again');
+    expect(
+      screen.getByText(
+        'Running Settle again generates a fresh proposal reflecting the latest financial state.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('clicking "Run Settle again" triggers agent run mutation', async () => {
+    let runCalled = false;
+    const action = createMockAction('FAILED', { id: 'act_failed_test' });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/agent/run')) {
+        runCalled = true;
+        return new Response(
+          JSON.stringify({
+            runId: 'run_123',
+            actions: [],
+            skipped: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return originalFetch(input);
+    });
+
+    try {
+      render(
+        <ActionDrawer isOpen={true} onClose={vi.fn()} action={action} invoice={mockInvoice} />,
+        { wrapper: createWrapper() },
+      );
+
+      fireEvent.click(screen.getByTestId(TEST_IDS.retryButton));
+
+      await waitFor(() => {
+        expect(runCalled).toBe(true);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('displays humanized message on 409 ACTION_NOT_OPEN mutation error', async () => {
+    const action = createMockAction('AWAITING_APPROVAL', { id: 'act_not_open' });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/actions/act_not_open/approve')) {
+        return new Response(
+          JSON.stringify({
+            error: { code: 'ACTION_NOT_OPEN', message: 'Action not open' },
+          }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return originalFetch(input);
+    });
+
+    try {
+      render(
+        <ActionDrawer isOpen={true} onClose={vi.fn()} action={action} invoice={mockInvoice} />,
+        { wrapper: createWrapper() },
+      );
+
+      fireEvent.click(screen.getByTestId(TEST_IDS.approveButton));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('This action has already been resolved or closed.'),
+        ).toBeInTheDocument();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 

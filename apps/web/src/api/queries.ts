@@ -178,26 +178,6 @@ export function useRejectAction() {
 }
 export const useReject = useRejectAction;
 
-export function useRetryAction() {
-  const queryClient = useQueryClient();
-  return useMutation<ActionRecord, Error, { id: string }>({
-    mutationFn: ({ id }) =>
-      apiRequest(ENDPOINTS.actionApprove(id), actionRecordSchema, {
-        method: 'POST',
-        body: '{}',
-      }),
-    onSuccess: (updated) => {
-      queryClient.setQueryData<ActionRecord[]>(QUERY_KEYS.actions, (old = []) =>
-        old.map((a) => (a.id === updated.id ? updated : a)),
-      );
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.actions });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.audit });
-    },
-  });
-}
-export const useRetry = useRetryAction;
-
 export function useUpdatePolicy() {
   const queryClient = useQueryClient();
   return useMutation<Policy, Error, Policy>({

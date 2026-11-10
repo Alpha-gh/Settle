@@ -3,7 +3,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import type { ActionRecord, Invoice, Payer, Cents } from '@settle/shared';
 import { TEST_IDS } from '../testids';
 import { formatUsd, formatDate, humanizeStatus } from '../lib/format';
-import { useApproveAction, useRejectAction, useRetryAction } from '../api/queries';
+import { useApproveAction, useRejectAction, useRunAgent } from '../api/queries';
+import { humanizeApiError } from '../api/client';
 import { BalanceChart } from './BalanceChart';
 
 export interface ActionDrawerProps {
@@ -30,10 +31,10 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
 
   const approveMutation = useApproveAction();
   const rejectMutation = useRejectAction();
-  const retryMutation = useRetryAction();
+  const runAgentMutation = useRunAgent();
 
   const isPending =
-    approveMutation.isPending || rejectMutation.isPending || retryMutation.isPending;
+    approveMutation.isPending || rejectMutation.isPending || runAgentMutation.isPending;
 
   const handleApprove = () => {
     if (!action || isSubmittingRef.current || isPending) return;
@@ -44,7 +45,7 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
       { id: action.id },
       {
         onError: (err) => {
-          setMutationError(err.message || 'Failed to approve action');
+          setMutationError(humanizeApiError(err));
         },
         onSettled: () => {
           isSubmittingRef.current = false;
@@ -62,7 +63,7 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
       { id: action.id },
       {
         onError: (err) => {
-          setMutationError(err.message || 'Failed to reject action');
+          setMutationError(humanizeApiError(err));
         },
         onSettled: () => {
           isSubmittingRef.current = false;
@@ -71,22 +72,19 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
     );
   };
 
-  const handleRetry = () => {
-    if (!action || isSubmittingRef.current || isPending) return;
+  const handleRunSettleAgain = () => {
+    if (isSubmittingRef.current || isPending) return;
     isSubmittingRef.current = true;
     setMutationError(null);
 
-    retryMutation.mutate(
-      { id: action.id },
-      {
-        onError: (err) => {
-          setMutationError(err.message || 'Failed to retry action');
-        },
-        onSettled: () => {
-          isSubmittingRef.current = false;
-        },
+    runAgentMutation.mutate(undefined, {
+      onError: (err) => {
+        setMutationError(humanizeApiError(err));
       },
-    );
+      onSettled: () => {
+        isSubmittingRef.current = false;
+      },
+    });
   };
 
   // Status badge styling per AGENT_RULES (Rule 8)
@@ -527,15 +525,20 @@ export const ActionDrawer: React.FC<ActionDrawerProps> = ({
 
             {/* FAILED action retry button */}
             {action?.status === 'FAILED' && (
-              <button
-                type="button"
-                data-testid={TEST_IDS.retryButton}
-                onClick={handleRetry}
-                disabled={isPending}
-                className="w-full py-2 px-4 rounded text-sm font-semibold bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {retryMutation.isPending ? 'Retrying...' : 'Retry Execution'}
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  data-testid={TEST_IDS.retryButton}
+                  onClick={handleRunSettleAgain}
+                  disabled={isPending}
+                  className="w-full py-2 px-4 rounded text-sm font-semibold bg-accent text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {runAgentMutation.isPending ? 'Running Settle...' : 'Run Settle again'}
+                </button>
+                <p className="text-xs text-muted text-center">
+                  Running Settle again generates a fresh proposal reflecting the latest financial state.
+                </p>
+              </div>
             )}
 
             {/* Read-only / terminal state indicator */}
