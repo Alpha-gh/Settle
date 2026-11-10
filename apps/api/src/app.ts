@@ -95,19 +95,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     crossOriginEmbedderPolicy: false,
   });
 
-  // Rate Limiting (Item 4: POST routes 60/min, generous on /api/demo/*)
+  // Rate Limiting (Static assets, /health, /api/events, and all GET routes exempt; POST-only with stricter /api/demo/* cap)
   await app.register(rateLimit, {
-    max: 60,
+    max: (req) => (req.url.startsWith('/api/demo') ? 30 : 60),
     timeWindow: '1 minute',
+    keyGenerator: (req) => `${req.ip}:${req.url.startsWith('/api/demo') ? 'demo' : 'post'}`,
     allowList: (req) => {
       if (env.NODE_ENV === 'test' && req.headers['x-test-rate-limit'] !== 'true') {
         return true;
       }
-      if (req.url.startsWith('/api/debug/llm')) {
-        return false;
+      if (
+        req.method !== 'POST' ||
+        req.url.startsWith('/assets/') ||
+        req.url === '/health' ||
+        req.url.startsWith('/health?') ||
+        req.url.startsWith('/api/events')
+      ) {
+        return true;
       }
-      if (req.method !== 'POST') return true;
-      if (req.url.startsWith('/api/demo')) return true;
       return false;
     },
     errorResponseBuilder: (_req, context) => {
@@ -118,17 +123,39 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     },
   });
 
-  // CORS (Item 4)
+  // CORS (Allow same-origin requests, WEB_ORIGIN="*", and comma-separated allowlist without 500 throws)
   await app.register(cors, {
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (origin === env.WEB_ORIGIN) return cb(null, true);
-      if (env.NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
-        return cb(null, true);
+    delegator: (req, cb) => {
+      const rawOrigin = req.headers.origin;
+      if (!rawOrigin) {
+        return cb(null, { origin: true, credentials: true });
       }
-      return cb(new Error('Not allowed by CORS'), false);
+      if (env.WEB_ORIGIN === '*') {
+        return cb(null, { origin: true, credentials: true });
+      }
+      const allowedOrigins = env.WEB_ORIGIN.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (allowedOrigins.includes(rawOrigin)) {
+        return cb(null, { origin: true, credentials: true });
+      }
+      // Always allow same-origin requests (e.g. module scripts/stylesheets with crossorigin attribute)
+      const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
+      const host = Array.isArray(rawHost) ? rawHost[0] : rawHost;
+      if (host) {
+        try {
+          if (new URL(rawOrigin).host === host) {
+            return cb(null, { origin: true, credentials: true });
+          }
+        } catch {
+          // Malformed Origin header
+        }
+      }
+      if (env.NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(rawOrigin)) {
+        return cb(null, { origin: true, credentials: true });
+      }
+      return cb(null, { origin: false });
     },
-    credentials: true,
   });
 
   // Global Error Handler (Item 4: mask 500 stack traces in production)
@@ -199,6 +226,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
 
+    if (statusCode >= 500) {
+      const isStaticReq =
+        request.url === '/' ||
+        request.url.startsWith('/assets/') ||
+        request.url.endsWith('.js') ||
+        request.url.endsWith('.css') ||
+        request.url.endsWith('.html');
+      request.log.error(
+        {
+          reqId: request.id,
+          method: request.method,
+          url: request.url,
+          origin: request.headers.origin,
+          errorMessage: error?.message,
+          err: error,
+        },
+        isStaticReq ? '500 response serving static request' : 'Unhandled 500 error',
+      );
+    }
+
     reply.status(statusCode).send({
       error: {
         code,
@@ -223,6 +270,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       prefix: '/',
       wildcard: false,
       index: false,
+      etag: true,
+      lastModified: true,
+      setHeaders: (res, pathName) => {
+        if (pathName.endsWith('.html')) {
+          res.header('Cache-Control', 'no-cache');
+        } else if (pathName.includes('/assets/') || pathName.includes('\\assets\\')) {
+          res.header('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
     });
   }
 
@@ -830,17 +886,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   // ── Debug LLM Endpoints (Item 3) ──
-  app.get(
-    '/api/debug/llm',
-    {
-      config: {
-        rateLimit: {
-          max: 30,
-          timeWindow: '1 minute',
-        },
-      },
-    },
-    async (_request, reply) => {
+  app.get('/api/debug/llm', async (_request, reply) => {
       const currentEnv = getEnv();
       const activeLlm = await getActiveLlm().catch(() => null);
 

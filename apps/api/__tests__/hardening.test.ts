@@ -122,4 +122,87 @@ describe('Hardening, Security & Deployment Features (Stage 5)', () => {
     });
     expect(res.statusCode).toBe(413);
   });
+
+  it('allows burst of 30 parallel asset GETs with Origin header and WEB_ORIGIN=* in production mode', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevWebOrigin = process.env.WEB_ORIGIN;
+    process.env.NODE_ENV = 'production';
+    process.env.WEB_ORIGIN = '*';
+
+    const prodApp = await buildApp();
+    await prodApp.ready();
+    try {
+      const homeRes = await prodApp.inject({ method: 'GET', url: '/' });
+      expect(homeRes.statusCode).toBe(200);
+      const assetUrls = [...homeRes.payload.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map(
+        (m) => m[1]!,
+      );
+      expect(assetUrls.length).toBeGreaterThan(0);
+
+      // Burst 30 parallel GETs with crossorigin Origin header and rate-limit active
+      const burstTargets = Array.from({ length: 30 }, (_, i) => assetUrls[i % assetUrls.length]!);
+      const burstResults = await Promise.all(
+        burstTargets.map((url) =>
+          prodApp.inject({
+            method: 'GET',
+            url,
+            headers: {
+              origin: 'https://settle-api-r8pd.onrender.com',
+              referer: 'https://settle-api-r8pd.onrender.com/',
+              'accept-encoding': 'gzip, br',
+              'sec-fetch-mode': 'cors',
+              'x-test-rate-limit': 'true',
+            },
+          }),
+        ),
+      );
+      for (const r of burstResults) {
+        expect(r.statusCode).toBe(200);
+      }
+
+      // Verify all main page assets still return 200 with expected content types
+      for (const url of assetUrls) {
+        const assetRes = await prodApp.inject({
+          method: 'GET',
+          url,
+          headers: {
+            origin: 'https://settle-api-r8pd.onrender.com',
+            'x-test-rate-limit': 'true',
+          },
+        });
+        expect(assetRes.statusCode).toBe(200);
+        if (url.endsWith('.css')) {
+          expect(assetRes.headers['content-type']).toContain('text/css');
+        } else if (url.endsWith('.js')) {
+          expect(assetRes.headers['content-type']).toContain('javascript');
+        }
+      }
+    } finally {
+      await prodApp.close();
+      process.env.NODE_ENV = prevNodeEnv;
+      process.env.WEB_ORIGIN = prevWebOrigin;
+    }
+  });
+
+  it('POST burst on /api/demo/* returns clean 429 JSON after stricter limit', async () => {
+    for (let i = 0; i < 30; i++) {
+      const r = await app.inject({
+        method: 'POST',
+        url: '/api/demo/reset',
+        headers: { 'x-test-rate-limit': 'true', 'x-forwarded-for': '10.0.0.99' },
+        payload: {},
+      });
+      expect(r.statusCode).toBe(200);
+    }
+
+    const limited = await app.inject({
+      method: 'POST',
+      url: '/api/demo/reset',
+      headers: { 'x-test-rate-limit': 'true', 'x-forwarded-for': '10.0.0.99' },
+      payload: {},
+    });
+    expect(limited.statusCode).toBe(429);
+    const body = JSON.parse(limited.payload);
+    expect(body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
 });
