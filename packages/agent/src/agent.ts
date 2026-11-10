@@ -53,6 +53,13 @@ function parsePositiveEnvNumber(key: string, defaultVal: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultVal;
 }
 
+function parseOptionalNonNegativeIntEnv(key: string): number | undefined {
+  const raw = process.env[key];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const parsed = Math.floor(Number(raw));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 async function withHardTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -87,6 +94,8 @@ export interface CreateAgentOptions {
   policy?: Policy;
   runMaxSeconds?: number;
   llmCallTimeoutSeconds?: number;
+  skipSingleEligibleDecision?: boolean;
+  maxLlmCallsPerRun?: number;
 }
 
 export interface AgentRunMetrics {
@@ -107,6 +116,8 @@ export class SettleAgent implements AgentPort {
   private readonly defaultPolicy?: Policy;
   private readonly runMaxSeconds?: number;
   private readonly llmCallTimeoutSeconds?: number;
+  private readonly skipSingleEligibleDecision?: boolean;
+  private readonly maxLlmCallsPerRun?: number;
   private lastRunMetrics: AgentRunMetrics = {
     decisions: 0,
     llmValid: 0,
@@ -125,6 +136,8 @@ export class SettleAgent implements AgentPort {
     this.defaultPolicy = options.policy;
     this.runMaxSeconds = options.runMaxSeconds;
     this.llmCallTimeoutSeconds = options.llmCallTimeoutSeconds;
+    this.skipSingleEligibleDecision = options.skipSingleEligibleDecision;
+    this.maxLlmCallsPerRun = options.maxLlmCallsPerRun;
   }
 
   getLastRunMetrics(): AgentRunMetrics {
@@ -145,6 +158,15 @@ export class SettleAgent implements AgentPort {
       (this.llmCallTimeoutSeconds ??
         parsePositiveEnvNumber('LLM_CALL_TIMEOUT_SECONDS', 12)) * 1000;
 
+    const maxLlmCalls =
+      this.maxLlmCallsPerRun ??
+      parseOptionalNonNegativeIntEnv('AGENT_LLM_MAX_CALLS_PER_RUN');
+    const skipSingleEligible =
+      this.skipSingleEligibleDecision === true ||
+      this.maxLlmCallsPerRun !== undefined ||
+      maxLlmCalls !== undefined;
+    let firstDiscountLlmDone = false;
+
     // Reserve margin so remaining invoices finish cleanly via rules before hitting runMaxMs
     const reserveMarginMs = Math.min(
       callTimeoutMs,
@@ -154,6 +176,9 @@ export class SettleAgent implements AgentPort {
       const remaining = runMaxMs - (performance.now() - runStartMs);
       return remaining <= reserveMarginMs;
     };
+    const isMaxCallsReached = (): boolean =>
+      maxLlmCalls !== undefined &&
+      (this.lastRunMetrics.llmCalls ?? 0) >= maxLlmCalls;
 
     const runScopedLlm: ExtendedLlmPort = {
       info: this.llm.info,
@@ -165,6 +190,9 @@ export class SettleAgent implements AgentPort {
         const remaining = runMaxMs - (performance.now() - runStartMs);
         if (remaining <= 0) {
           throw new LlmTimeoutError('Agent run budget exhausted');
+        }
+        if (isMaxCallsReached()) {
+          throw new LlmTimeoutError('Max LLM calls per run reached');
         }
         this.lastRunMetrics.llmCalls = (this.lastRunMetrics.llmCalls ?? 0) + 1;
         const effectiveTimeout = Math.max(50, Math.min(callTimeoutMs, remaining));
@@ -322,7 +350,16 @@ export class SettleAgent implements AgentPort {
         let path: 'llm' | 'fallback' | 'rules' = 'llm';
         let groundingFailed = false;
 
-        if (isBudgetNearlyUsedUp()) {
+        const shouldSkipSingleEligible =
+          skipSingleEligible &&
+          eligible.length === 1 &&
+          !(!firstDiscountLlmDone && eligible[0]?.change.type === 'OFFER_DISCOUNT');
+
+        if (
+          isBudgetNearlyUsedUp() ||
+          isMaxCallsReached() ||
+          shouldSkipSingleEligible
+        ) {
           path = 'rules';
           chosenCandidate = deterministicChoice(eligible);
           modelReason = templatedReason(chosenCandidate, invoice);
@@ -371,7 +408,7 @@ export class SettleAgent implements AgentPort {
                   groundingFailed = true;
                   this.lastRunMetrics.groundingFailures += 1;
 
-                  if (!isBudgetNearlyUsedUp()) {
+                  if (!isBudgetNearlyUsedUp() && !isMaxCallsReached()) {
                     this.lastRunMetrics.retries += 1;
 
                     // Retry ONCE with feedback on ungrounded offenders / length
@@ -433,7 +470,12 @@ export class SettleAgent implements AgentPort {
             }
 
             // Retry ONCE if invalid schema or optionId
-            if (!chosenCandidate && !groundingFailed && !isBudgetNearlyUsedUp()) {
+            if (
+              !chosenCandidate &&
+              !groundingFailed &&
+              !isBudgetNearlyUsedUp() &&
+              !isMaxCallsReached()
+            ) {
               this.lastRunMetrics.retries += 1;
               const retryPrompt = `${user}\n\nPREVIOUS ATTEMPT WAS INVALID. Please choose one valid optionId from: ${candidateIds.join(', ')} and provide an owner-facing reason (<= 240 chars).`;
               const retryRaw = await runScopedLlm.generateStructured<{
@@ -486,6 +528,13 @@ export class SettleAgent implements AgentPort {
             this.lastRunMetrics.fallbacks += 1;
             chosenCandidate = deterministicChoice(eligible);
             modelReason = templatedReason(chosenCandidate, invoice);
+          }
+
+          if (
+            path === 'llm' &&
+            chosenCandidate.change.type === 'OFFER_DISCOUNT'
+          ) {
+            firstDiscountLlmDone = true;
           }
         }
 
@@ -555,7 +604,7 @@ export class SettleAgent implements AgentPort {
           };
 
           const note =
-            path === 'rules' || isBudgetNearlyUsedUp()
+            path === 'rules' || isBudgetNearlyUsedUp() || isMaxCallsReached()
               ? fallbackDraftNote({
                   action: { type: actionType, params: actionParams },
                   invoice,

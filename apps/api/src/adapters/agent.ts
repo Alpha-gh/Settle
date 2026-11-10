@@ -265,6 +265,8 @@ export async function getAgent(): Promise<AgentPort> {
       clock,
       runMaxSeconds: env.AGENT_RUN_MAX_SECONDS,
       llmCallTimeoutSeconds: env.LLM_CALL_TIMEOUT_SECONDS,
+      skipSingleEligibleDecision: true,
+      maxLlmCallsPerRun: env.AGENT_LLM_MAX_CALLS_PER_RUN,
     });
 
     return agentInstance;
