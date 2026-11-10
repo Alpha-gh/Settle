@@ -158,15 +158,15 @@ Key test IDs include:
 - Slide-over drawer built on Radix Dialog (`@radix-ui/react-dialog`) with `modal={false}` so hero scenario simulations on the dashboard remain visible side-by-side.
 - Top-to-bottom layout:
   1. Header: invoice number, payer name, invoice amount, status chip, close button (`drawerClose`).
-  2. Agent Reason (`drawerReason`): `"Why Settle proposes this"` verbatim reason text.
+  2. Agent Reason (`drawerReason`): `"Why Settle proposes this"` displays `reasonDisplay` (or stripped `reason` without `[via ...]`) and renders a muted provenance caption (`"Written by <provider/model>"` when `path=llm` or `"Written by rules"`).
   3. Option Details: discount percentage or instalment breakdown.
   4. Impact Simulation: compact `BalanceChart` with scenario overlay, plus cash given up (`cashCost`), lowest balance change (`lowestDelta`), shortfall change (`shortfallDelta`), and `"Closes the gap"` indicator. Shows explicit `"No simulation attached"` fallback when absent.
   5. Assumptions List (`drawerAssumptions`): Unordered list from `simulation.assumptions`.
   6. Policy Safety Review (`drawerPolicy`): Shows allowed status, approval requirement, and prominent red violations list when `BLOCKED` with note `"Blocked by policy. Settle cannot override this."`.
   7. Status Timeline (`drawerTimeline`): Highlights strictly based on recorded timestamps and statuses. Displays `paypalRequestId` exclusively for `EXECUTED` status. Never claims "sent" or "paid" for pre-execution states.
   8. Action Controls:
-     - `AWAITING_APPROVAL`: Primary accent "Approve" (`approveButton`) and secondary "Reject" (`rejectButton`). Double-click protected via submission ref lock.
-     - `FAILED`: Error message and "Retry Execution" (`retryButton`).
+     - `AWAITING_APPROVAL`: Primary accent "Approve" (`approveButton`) and secondary "Reject" (`rejectButton`). Double-click protected via submission ref lock. Error responses (409/502) are mapped to human-readable messages via `humanizeApiError`.
+     - `FAILED`: Error message, `"Run Settle again"` (`retryButton`, calling `POST /api/agent/run`), and helper explanation.
      - Terminal/blocked states: Read-only notice.
 
 ### Live Real-Time Cell Flashing & SSE Updates
@@ -181,7 +181,7 @@ Key test IDs include:
 ### Co-Pilot Panel (`src/components/Copilot.tsx`)
 - Slide-over drawer opened via header button (`copilotToggle`) across all views; built with Radix Dialog, accessible focus trap, and `Esc` dismissal.
 - Three canned suggested prompt chips (`chatSuggestion1`, `chatSuggestion2`, `chatSuggestion3`):
-  1. *"Can I cover payroll on Friday?"*
+  1. *"Can I cover the next payroll?"*
   2. *"What if I buy $3,000 of stock on Monday?"*
   3. *"Which invoice should I chase first?"*
 - Answers rendered strictly as plain text nodes to prevent markdown or HTML injection.
@@ -208,14 +208,11 @@ Key test IDs include:
 - Optimistic feedback: success toast alert (`role="status"`, testid `toast`) auto-dismissing after 3.5s; server error notification with retry button (`policyError`, `policyRetry`).
 
 ### Impact Card (`src/components/ImpactCard.tsx`)
-- Replaces dashboard impact placeholder with high-integrity "Before vs After" financial comparison.
-- Captures initial session baseline metrics as immutable "Before" state:
-  - Lowest cash balance
-  - Cash reserve shortfall
-- Displays verified "After" metrics from current live API state.
-- Invoices collected count and cash given up in settlement discounts sourced from action and ledger data.
-- Green improvement indicators conditionally applied ONLY when API values improved (`afterLowest > beforeLowest` or `afterShortfall < beforeShortfall`).
-- Accessible empty state (`"Run Settle to see impact"`) when no actions have yet executed.
+- Replaces dashboard impact placeholder with high-integrity "Before vs After" financial comparison derived strictly client-side from `GET /api/dashboard` (no `/api/impact` request).
+- Captures initial baseline metrics (`lowest.amount` and `shortfall`) when a breach is present and zero actions have executed, storing the baseline in `sessionStorage` keyed by business and `asOf`.
+- Displays verified "After" metrics from the live working forecast in `GET /api/dashboard`.
+- Invoices collected count and cash given up in settlement discounts (sum of `simulation.cashCost` across executed/approved `OFFER_DISCOUNT` actions) sourced from dashboard data.
+- Accessible empty state (`"Run Settle to see impact"`) when no baseline is captured or no activity/actions have executed yet, with zero hardcoded fallback numbers.
 
 ### Demo Controls (`src/components/DemoControls.tsx`)
 - Guarded panel rendered ONLY when `?demo=1` query parameter is present or `settle:demo=1` is stored in `sessionStorage`.
@@ -246,14 +243,12 @@ Key test IDs include:
 
 ## 9. Full System Verification Summary
 
-All verification gates have passed completely:
+All verification gates have passed cleanly:
 1. `pnpm --filter web typecheck` -> **0 errors** (`tsc --noEmit`).
 2. `pnpm --filter web lint` -> **0 errors, 0 warnings** (`eslint .`).
-3. `pnpm --filter web test` -> **137 tests passed across 27 test files** (100% passing).
-4. `pnpm --filter web test:e2e` -> **12 Playwright tests passed** across smoke flow, accessibility audits, test IDs, and virtualization performance.
-5. `pnpm --filter web build` -> **Vite build succeeds**, all chunks < 234 kB gzipped.
-6. `axe-core` accessibility audit -> **0 serious or critical violations** on all routes and drawers.
-7. Monorepo boundary check -> **0 changes outside `apps/web/`**, `.env` untracked.
+3. `pnpm --filter web test` -> **148 tests passed across 27 test files** (100% passing).
+4. `pnpm --filter web build` -> **Vite build succeeds**, all chunks < 234 kB gzipped.
+5. `axe-core` accessibility audit -> **0 serious or critical violations** on all routes and drawers.
 
 ---
 
@@ -266,7 +261,7 @@ The following exact sequence delivers the complete Settle story in under 3 minut
 | **1** | `0:00` | Open browser to `http://localhost:5173/?demo=1` | Sandbox badge visible ("Sandbox - no real funds"). Red breach banner alerts: *"Payroll November (Bi-weekly) on Fri 6 Nov: short $2,000.00 under your reserve"*. 30-day chart shows closing balance dipping below reserve on Friday. | *"Welcome to Settle. Here is Northwind Studio's cash outlook. Notice the red alert: without intervention, payroll on Friday November 6th will breach our $5,000 operating reserve by exactly $2,000."* |
 | **2** | `0:30` | Click **"Run Settle"** button | Indeterminate progress bar shows *"Running Settle"*. Button disables. Result line appears: *"7 actions proposed, 1 invoice skipped"*. Receivables worklist populates with action pills. | *"We trigger Settle's autonomous engine. Settle analyzes the ledger, computes optimal recovery options under our policy guardrails, and identifies high-probability actions to close the gap."* |
 | **3** | `0:55` | Click **"Co-pilot"** header button | Co-pilot panel slides in smoothly from the right. Focus traps. Suggested prompt chips appear. | *"Let's open the Settle Co-pilot to interrogate our liquidity trajectory in natural language."* |
-| **4** | `1:10` | Click *"Can I cover payroll on Friday?"* prompt chip | Thinking pulse indicator appears. Plain-text answer streams in. Tool call disclosure details ledger queries. Inline simulation chart shows baseline vs proposed recovery trajectory. | *"The Co-pilot confirms our payroll liability, inspects overdue receivables, and projects that recovering Bluefin Media's invoice will preserve our liquidity buffer."* |
+| **4** | `1:10` | Click *"Can I cover the next payroll?"* prompt chip | Thinking pulse indicator appears. Plain-text answer streams in. Tool call disclosure details ledger queries. Inline simulation chart shows baseline vs proposed recovery trajectory. | *"The Co-pilot confirms our payroll liability, inspects overdue receivables, and projects that recovering Bluefin Media's invoice will preserve our liquidity buffer."* |
 | **5** | `1:30` | Press `Esc` or click `X` to close Co-pilot; click `INV-1001` (Bluefin Media) row in worklist | Action review drawer opens for `act_001`. "Closes the gap" green badge renders. Policy verdict confirms within limits. Hero chart on dashboard overlays blue scenario trajectory. Status timeline highlights `PROPOSED` -> `AWAITING_APPROVAL`. | *"Here is the proposed action for Bluefin Media: a 3% early-settlement discount. Settle proves this action recovers $4,850 and prevents the payroll breach. The timeline strictly reflects API state without premature claims."* |
 | **6** | `2:00` | Click **"Approve"** button in drawer | Approve button enters pending state. Timeline transitions to `APPROVED` (decided by owner). Within ~1.2s, status transitions to `EXECUTED` with a monospace PayPal request ID (`PP-REQ-7F3A91`). | *"With one click, the owner approves the settlement. Settle calls the PayPal Invoicing API, executing the discount and attaching the immutable PayPal tracking reference."* |
 | **7** | `2:25` | In the floating Demo panel, click **"Simulate payment for INV-1001"** | Simulated settlement event triggers via SSE. Worklist row flashes green and updates chip to `Paid`. Red breach alert disappears. Green banner slides in: *"Gap closed: your balance now stays above your reserve"*. Shortfall KPI drops to `$0.00`. | *"Bluefin Media settles their invoice via PayPal. In real-time, the ledger updates: the breach is completely eliminated, cash today increases, and our reserve remains protected."* |
@@ -298,8 +293,8 @@ Every data contract imported from `@settle/shared` is mapped to its rendering co
 The real-time streaming layer in `src/api/sse.tsx` guarantees live UI synchronization under lossy network conditions:
 
 1. **Connection Lifecycle**:
-   - In Live Mode (`VITE_API_BASE` set): Connects to native `EventSource("${VITE_API_BASE}/api/events")`.
-   - In Mock Mode (`VITE_API_BASE` empty): Connects to `mockEventBus` in `src/api/bus.ts`.
+   - In Live Mode (`VITE_USE_MOCKS` unset or `'false'`): Connects to native `EventSource("${VITE_API_BASE || ''}/api/events")`.
+   - In Mock Mode (`VITE_USE_MOCKS=true`): Connects to `mockEventBus` in `src/api/bus.ts`.
 2. **Exponential Backoff**:
    - Initial reconnect attempt: 1,000 ms.
    - Growth factor: $2.0 \times$ with random jitter ($\pm 20\%$) to prevent thundering herd.

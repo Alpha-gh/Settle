@@ -23,18 +23,25 @@ pnpm install
 
 | Variable | Default | Purpose & Description |
 | :--- | :--- | :--- |
-| `VITE_API_BASE` | `""` (unset/empty) | Base URL for REST API and SSE stream (`${VITE_API_BASE}/api/events`). When unset or empty, the application runs fully standalone in **Mock Mode** using Mock Service Worker (MSW) and browser-internal reactive event bus. When set (e.g. `http://localhost:3000`), all requests and EventSource streams hit the live backend API. |
-| `VITE_MOCK_LATENCY_MS`| `250` | Simulated network latency in milliseconds for MSW request handlers (overridden to `100` during Playwright E2E tests for speed). |
+| `VITE_USE_MOCKS` | `false` | Set to `"true"` to enable Mock Service Worker (MSW) and the in-memory mock event bus for standalone UI development without a running backend. Unset or `"false"` runs against the real API. |
+| `VITE_API_BASE` | `""` (unset/empty) | Optional base URL for REST API and SSE stream (`${VITE_API_BASE}/api/events`). When empty in live mode, requests use same-origin relative paths (proxied to `http://localhost:3000` during `vite` dev or served directly by `apps/api` in production). |
+| `VITE_MOCK_LATENCY_MS`| `250` | Simulated network latency in milliseconds for MSW request handlers when `VITE_USE_MOCKS=true` (overridden to `100` during Playwright E2E tests for speed). |
 
 ---
 
 ## 3. Running & Development
 
-### Start Development Server
+### Start Development Server (Live API)
 ```bash
 pnpm --filter web dev
 ```
-Runs Vite on [http://localhost:5173/](http://localhost:5173/).
+Runs Vite on [http://localhost:5173/](http://localhost:5173/) and proxies `/api` and `/health` requests to `http://localhost:3000`.
+
+### Start Development Server (Standalone Mock Mode)
+```bash
+pnpm --filter web dev:mock
+```
+Runs Vite with `VITE_USE_MOCKS=true` using MSW in the browser.
 
 To experience the guided interactive demo story, navigate to:
 ```
@@ -57,7 +64,7 @@ Runs ESLint with zero allowed warnings/errors across all source files and test s
 ```bash
 pnpm --filter web test
 ```
-Executes Vitest suite (137 tests across 27 test files covering components, formatting, derivations, schema validation, WCAG AA contrast, error recovery with retry, and grep guard enforcement).
+Executes Vitest suite (148 tests across 27 test files covering components, formatting, derivations, schema validation, WCAG AA contrast, error recovery with retry, and grep guard enforcement).
 
 ### Playwright End-to-End Tests
 ```bash
@@ -86,8 +93,9 @@ apps/web/
 ├── src/
 │   ├── api/                       # Data fetching, queries, schemas, and event bus
 │   │   ├── bus.ts                 # Reactive SSE event bus adapter
+│   │   ├── client.ts              # Fetch client, Zod guard, and API error humanizer
 │   │   ├── endpoints.ts           # Single source of truth for API URL endpoints
-│   │   ├── impactAdapter.ts       # Fallback derivation adapter for /api/impact
+│   │   ├── impactAdapter.ts       # Client-side impact derivation from dashboard data
 │   │   ├── queries.ts             # TanStack Query hooks & mutations
 │   │   ├── schemas.ts             # Strict Zod schemas with AssertEqual contract checks
 │   │   ├── selectors.ts           # Pure snapshot + actions worklist row joins
@@ -128,8 +136,10 @@ apps/web/
 
 ---
 
-## 5. Contract Notes & TODOs
+## 5. API Integration Notes
 
-- Domain types are imported from `@settle/shared` via workspace reference and TypeScript path alias.
-- **TODO**: Remove the path/Vite alias pointing to `packages/shared/src/index.ts` once `@settle/shared` package distribution lands cleanly in monorepo CI without local source resolution.
-- Refer to `docs/API.md` and `CONTRACT_CHANGE_REQUEST.md` for proposed backend endpoints (`/api/impact`, idempotency keys, and action retry routes).
+- Dashboard data (`business`, `kpis`, `forecast`, `invoices`, `payers`, `obligations`, `policy`, `recentActions`) is fetched from the composite `GET /api/dashboard` endpoint and projected to React Query cache slices.
+- Simulated payments post `{ invoiceId, amount? }` to `POST /api/demo/simulate-payment`.
+- Failed actions offer **"Run Settle again"** (`POST /api/agent/run`) rather than retrying terminal action records.
+- Impact Card metrics (baseline vs working lowest balance, shortfall reduction, cash given up in discounts) are derived strictly client-side from dashboard state and sessionStorage baseline snapshots.
+- Domain types are imported from `@settle/shared` via workspace reference.
