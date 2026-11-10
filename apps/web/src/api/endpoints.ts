@@ -13,7 +13,6 @@ export const ENDPOINTS = {
   policy: () => '/api/policy',
   chat: () => '/api/chat',
   events: () => '/api/events',
-  impact: () => '/api/impact',
   demoReset: () => '/api/demo/reset',
   demoSimulatePayment: () => '/api/demo/simulate-payment',
 } as const;

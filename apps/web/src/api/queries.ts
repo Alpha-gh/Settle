@@ -22,7 +22,6 @@ import {
   type DashboardResponse,
 } from './schemas';
 import {
-  impactSummarySchema,
   deriveImpactSummary,
   type ImpactSummary,
 } from './impactAdapter';
@@ -108,18 +107,19 @@ export function useImpact() {
 
   return useQuery<ImpactSummary>({
     queryKey: QUERY_KEYS.impact,
-    queryFn: async () => {
-      try {
-        return await apiRequest(ENDPOINTS.impact(), impactSummarySchema);
-      } catch (err: unknown) {
-        // Fallback: If 404, derive client-side using engine-provided cents from query cache
-        const actions = queryClient.getQueryData<ActionRecord[]>(QUERY_KEYS.actions) || [];
-        const forecast = queryClient.getQueryData<ForecastResult>(QUERY_KEYS.forecast);
-        if (forecast) {
-          return deriveImpactSummary(actions, forecast);
-        }
-        throw err;
+    queryFn: () => {
+      const actions = queryClient.getQueryData<ActionRecord[]>(QUERY_KEYS.actions) || [];
+      const forecast = queryClient.getQueryData<ForecastResult>(QUERY_KEYS.forecast);
+      if (forecast) {
+        return deriveImpactSummary(actions, forecast);
       }
+      return {
+        cashRecovered: 0,
+        projectedShortfallClosed: 0,
+        actionsCount: 0,
+        actionsExecuted: 0,
+        gapClosed: false,
+      };
     },
   });
 }

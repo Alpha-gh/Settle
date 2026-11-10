@@ -9,6 +9,7 @@ describe('ImpactCard Component', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
+    sessionStorage.clear();
     mockState.reset();
     queryClient = new QueryClient({
       defaultOptions: {
@@ -61,5 +62,33 @@ describe('ImpactCard Component', () => {
 
     // Invoices collected: 1 invoice
     expect(screen.getByTestId(TEST_IDS.impactInvoicesCollected)).toHaveTextContent('1 invoice');
+  });
+
+  it('displays cash given up when an OFFER_DISCOUNT action is executed', async () => {
+    // 1. Mount to capture baseline
+    renderComponent();
+    await waitFor(() => {
+      expect(screen.getByTestId(TEST_IDS.impactEmpty)).toBeInTheDocument();
+    });
+
+    // 2. Run agent and mark an OFFER_DISCOUNT action as EXECUTED with cashCost 7000
+    act(() => {
+      mockState.runAgent();
+      const discountAction = mockState.actions.find((a) => a.type === 'OFFER_DISCOUNT');
+      if (discountAction && discountAction.simulation) {
+        discountAction.status = 'EXECUTED';
+        discountAction.simulation = {
+          ...discountAction.simulation,
+          cashCost: 7000,
+        };
+      }
+      queryClient.invalidateQueries();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Recovery Impact')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId(TEST_IDS.impactCashDiscounts)).toHaveTextContent('$70.00');
   });
 });

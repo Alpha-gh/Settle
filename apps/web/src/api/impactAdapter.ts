@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import type { Cents, ActionRecord, ForecastResult } from '@settle/shared';
 
-/**
- * ImpactSummary is NOT present in @settle/shared.
- * Recorded in CONTRACT_CHANGE_REQUEST.md.
- */
 export interface ImpactSummary {
   cashRecovered: Cents;
   projectedShortfallClosed: Cents;
@@ -23,29 +19,26 @@ export const impactSummarySchema = z.object({
 
 /**
  * Derives ImpactSummary client-side from actions and forecast.
- * Per AGENT_RULES.md (Rule 2 & 9):
  * Uses plain summation of engine-provided cents only. No business arithmetic.
  */
 export function deriveImpactSummary(
   actions: ActionRecord[],
   forecast: ForecastResult,
-  baselineShortfall: Cents = 200000,
+  baselineShortfall?: Cents | null,
 ): ImpactSummary {
   const executed = actions.filter((a) => a.status === 'EXECUTED');
 
-  // Summation of engine-provided cents
   const cashRecovered = executed.reduce((sum, a) => {
-    // If simulation provided cash cost or receipts, or plain summation
     if (a.simulation) {
-      return sum + (a.simulation.scenario.lowest.amount - a.simulation.baseline.lowest.amount > 0
-        ? a.simulation.scenario.lowest.amount - a.simulation.baseline.lowest.amount
-        : 0);
+      const diff = a.simulation.scenario.lowest.amount - a.simulation.baseline.lowest.amount;
+      return sum + (diff > 0 ? diff : 0);
     }
     return sum;
   }, 0);
 
-  const shortfallDifference = Math.max(0, baselineShortfall - forecast.shortfall);
-  const gapClosed = forecast.firstBreachDate === null && baselineShortfall > 0;
+  const baseShortfall = baselineShortfall ?? 0;
+  const shortfallDifference = Math.max(0, baseShortfall - forecast.shortfall);
+  const gapClosed = forecast.lowest.amount >= 0 || (forecast.firstBreachDate === null && baseShortfall > 0);
 
   return {
     cashRecovered,

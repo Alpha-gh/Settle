@@ -1,6 +1,5 @@
 import { http, HttpResponse, delay } from 'msw';
 import { mockState } from './state';
-import { deriveImpactSummary } from '../api/impactAdapter';
 import type { Policy } from '@settle/shared';
 
 const getLatency = (): number => {
@@ -116,13 +115,6 @@ export const handlers = [
     const body = (await request.json()) as { question: string };
     const answer = mockState.chat(body.question);
     return HttpResponse.json(answer);
-  }),
-
-  // 13. GET /api/impact
-  http.get('/api/impact', async () => {
-    await delay(getLatency());
-    const impact = deriveImpactSummary(mockState.actions, mockState.forecast);
-    return HttpResponse.json(impact);
   }),
 
   // 14. POST /api/demo/reset

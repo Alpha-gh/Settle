@@ -142,7 +142,7 @@ describe('MSW State and Handlers Schema Compliance', () => {
     expect(fallbackParsed.success).toBe(true);
   });
 
-  it('GET /api/impact conforms to impactSummarySchema', () => {
+  it('deriveImpactSummary conforms to impactSummarySchema', () => {
     mockState.runAgent();
     const impact = deriveImpactSummary(mockState.actions, mockState.forecast);
     const parsed = impactSummarySchema.safeParse(impact);

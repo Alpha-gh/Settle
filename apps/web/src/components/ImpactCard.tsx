@@ -1,27 +1,61 @@
-import React, { useRef, useEffect } from 'react';
-import { useSnapshot, useForecast, useActions, useImpact } from '../api/queries';
+import React, { useState, useEffect } from 'react';
+import { useDashboard, useActions } from '../api/queries';
 import { formatUsd } from '../lib/format';
 import { TEST_IDS } from '../testids';
 import type { Cents } from '@settle/shared';
 
+interface BaselineState {
+  lowest: Cents;
+  shortfall: Cents;
+}
+
 export const ImpactCard: React.FC = () => {
-  const { data: snapshot, isLoading: loadingSnapshot } = useSnapshot();
-  const { data: forecast, isLoading: loadingForecast } = useForecast();
+  const { data: dashboard, isLoading: loadingDashboard } = useDashboard();
   const { data: actions = [], isLoading: loadingActions } = useActions();
-  const { data: impactSummary, isLoading: loadingImpact } = useImpact();
 
-  // Baseline "Before" memory: preserve the first forecast values seen in this session
-  const baselineLowestRef = useRef<Cents | null>(null);
-  const baselineShortfallRef = useRef<Cents | null>(null);
+  const businessId = dashboard?.business?.id;
+  const asOf = dashboard?.business?.asOf;
+  const storageKey = businessId
+    ? `settle:baseline:${businessId}:${asOf ?? ''}`
+    : 'settle:baseline:default';
 
-  useEffect(() => {
-    if (forecast && baselineLowestRef.current === null) {
-      baselineLowestRef.current = forecast.lowest.amount;
-      baselineShortfallRef.current = forecast.shortfall;
+  // Read baseline from sessionStorage on mount / key change
+  const [baseline, setBaseline] = useState<BaselineState | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const stored = sessionStorage.getItem(storageKey);
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
     }
-  }, [forecast]);
+  });
 
-  const isLoading = loadingSnapshot || loadingForecast || loadingActions || loadingImpact;
+  const forecast = dashboard?.forecast;
+  const invoices = dashboard?.invoices ?? [];
+
+  // Capture baseline from initial forecast when a breach is present and no actions have executed
+  useEffect(() => {
+    if (!forecast) return;
+
+    const executedActions = actions.filter((a) => a.status === 'EXECUTED');
+    const isBreach = forecast.shortfall > 0 || forecast.firstBreachDate !== null;
+
+    // When there are no executed actions and a breach is present, this is our true baseline
+    if (executedActions.length === 0 && isBreach) {
+      const captured: BaselineState = {
+        lowest: forecast.lowest.amount,
+        shortfall: forecast.shortfall,
+      };
+      setBaseline(captured);
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(captured));
+      } catch {
+        // ignore
+      }
+    }
+  }, [forecast, actions, storageKey]);
+
+  const isLoading = loadingDashboard || loadingActions;
 
   if (isLoading) {
     return (
@@ -41,28 +75,25 @@ export const ImpactCard: React.FC = () => {
   }
 
   // Derive counts from API data
-  const paidInvoices = snapshot?.invoices.filter((i) => i.status === 'PAID') ?? [];
+  const paidInvoices = invoices.filter((i) => i.status === 'PAID');
   const executedActions = actions.filter((a) => a.status === 'EXECUTED');
+  const approvedOrExecutedActions = actions.filter(
+    (a) => a.status === 'EXECUTED' || a.status === 'APPROVED',
+  );
 
-  // Cash given up in discounts: sum of simulation.cashCost over EXECUTED actions (plain summation)
-  const cashGivenUpInDiscounts = executedActions.reduce((sum, a) => {
-    return sum + (a.simulation?.cashCost ?? 0);
+  // Cash given up: sum of discount amounts from EXECUTED actions (or approved actions about to execute)
+  const cashGivenUpInDiscounts = approvedOrExecutedActions.reduce((sum, a) => {
+    if (a.type === 'OFFER_DISCOUNT') {
+      return sum + (a.simulation?.cashCost ?? 0);
+    }
+    return sum;
   }, 0);
 
-  const beforeLowest = baselineLowestRef.current ?? forecast?.lowest.amount ?? 300000;
-  const beforeShortfall = baselineShortfallRef.current ?? forecast?.shortfall ?? 200000;
-
-  const afterLowest = forecast?.lowest.amount ?? beforeLowest;
-  const afterShortfall = forecast?.shortfall ?? beforeShortfall;
-
   // Has any collection or action execution occurred?
-  const hasCollectionActivity =
-    paidInvoices.length > 0 ||
-    executedActions.length > 0 ||
-    (impactSummary && (impactSummary.actionsExecuted > 0 || impactSummary.cashRecovered > 0));
+  const hasCollectionActivity = paidInvoices.length > 0 || executedActions.length > 0;
 
-  // Empty state before any collection happens
-  if (!hasCollectionActivity) {
+  // Empty state when no actions proposed yet, or no activity yet, or no baseline
+  if (!hasCollectionActivity || !baseline || !forecast) {
     return (
       <div
         data-testid={TEST_IDS.impactCard}
@@ -79,9 +110,14 @@ export const ImpactCard: React.FC = () => {
     );
   }
 
-  // Improved checks (compare only, no business arithmetic)
+  const beforeLowest = baseline.lowest;
+  const beforeShortfall = baseline.shortfall;
+  const afterLowest = forecast.lowest.amount;
+  const afterShortfall = forecast.shortfall;
+
   const lowestImproved = afterLowest > beforeLowest;
   const shortfallImproved = afterShortfall < beforeShortfall;
+  const gapClosed = afterLowest >= 0 || (afterShortfall === 0 && beforeShortfall > 0);
 
   return (
     <div
@@ -96,7 +132,7 @@ export const ImpactCard: React.FC = () => {
           </p>
         </div>
         <span className="px-2.5 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-green-50 text-green-900 border border-green-300">
-          Verified Impact
+          {gapClosed ? 'Gap Closed' : 'Verified Impact'}
         </span>
       </div>
 
@@ -210,4 +246,3 @@ export const ImpactCard: React.FC = () => {
     </div>
   );
 };
-
