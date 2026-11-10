@@ -30,9 +30,11 @@ export class AnthropicLlm implements LlmPort {
       DEFAULT_ANTHROPIC_MODEL;
     this.timeoutMs =
       options.timeoutMs ??
-      (process.env.LLM_TIMEOUT_MS
-        ? parseInt(process.env.LLM_TIMEOUT_MS, 10)
-        : 15000);
+      (process.env.LLM_CALL_TIMEOUT_SECONDS
+        ? Math.round(parseFloat(process.env.LLM_CALL_TIMEOUT_SECONDS) * 1000)
+        : process.env.LLM_TIMEOUT_MS
+          ? parseInt(process.env.LLM_TIMEOUT_MS, 10)
+          : 12000);
     this.fetchFn = options.fetchFn ?? fetch;
     this.info = {
       provider: 'anthropic',

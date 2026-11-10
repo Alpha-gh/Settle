@@ -32,6 +32,7 @@ export const TEST_IDS = {
   // Stage 2 Dashboard additions
   runSettleResult: 'run-settle-result',
   runSettleProgress: 'run-settle-progress',
+  runSettleWaiting: 'run-settle-waiting',
   runSettleError: 'run-settle-error',
   runSettleRetry: 'run-settle-retry',
   kpiSkeleton: 'kpi-skeleton',

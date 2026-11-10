@@ -176,4 +176,21 @@ In production (`NODE_ENV=production`) with `WEB_ORIGIN=*` in `render.yaml`:
 - **Static Caching & 500 Logging (`apps/api/src/app.ts`):** Configured `etag: true`, `lastModified: true`, `no-cache` for `.html`, immutable 1-year caching for hashed `/assets/*`, and structured Pino error logs (`reqId`, `url`, `origin`, `errorMessage`) for any 500 response.
 - **Root Error Boundary (`apps/web/src/components/RootErrorBoundary.tsx`, `apps/web/src/main.tsx`):** Added a React `RootErrorBoundary` and startup error fallback displaying the error message and a **Reload** button instead of a blank screen if startup fails.
 
+---
+
+## 9. Agent Run Lock Safety, Budgets & Rate-Limit Resilience
+
+### New Environment Variables & Defaults
+
+| Variable | Default | Purpose |
+| :--- | :---: | :--- |
+| `AGENT_RUN_LOCK_TTL_SECONDS` | `150` | Maximum age before an in-memory agent run lock is treated as stale, logged as a warning (`ageSeconds`), and automatically released for a new run |
+| `AGENT_RUN_MAX_SECONDS` | `90` | Total run budget in seconds; remaining invoices finish cleanly via deterministic rules (`path=rules`) before the budget expires |
+| `LLM_CALL_TIMEOUT_SECONDS` | `12` | Per-call hard timeout applied across Gemini, Anthropic, and OpenAI adapters as well as the agent run loop |
+| `AGENT_LLM_MAX_CALLS_PER_RUN` | `4` | Maximum number of LLM calls permitted in a single `POST /api/agent/run` cycle (with single-eligible non-first-discount invoices handled by rules automatically) |
+
+### Endpoints & Behavior
+- **`GET /api/agent/status`:** Returns `{ running: boolean, startedAt: string | null, ageSeconds: number }` for safe client polling when a run is in progress.
+- **`409 AGENT_RUN_IN_PROGRESS`:** Includes `startedAt` and `ageSeconds` in the `error` object so the web client can show `"A run is already in progress, waiting..."` and poll `/api/agent/status` every 2 seconds instead of displaying an error.
+- **429 Fast Fallback:** If an upstream LLM returns HTTP 429 (`RESOURCE_EXHAUSTED` / rate limit), the agent stops retrying immediately, falls back that invoice via `path=fallback`, handles remaining invoices via `path=rules`, and records a single `agent.llm_fallback` audit event.
 

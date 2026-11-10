@@ -17,8 +17,9 @@ import type {
 import { evaluatePolicy } from '@settle/shared';
 import { runChat } from './chat/chat.js';
 import { SystemClock, type Clock } from './clock.js';
-import { draftNote } from './draftNote.js';
+import { draftNote, fallbackDraftNote } from './draftNote.js';
 import { deterministicChoice, templatedReason } from './fallback.js';
+import { LlmHttpError, LlmTimeoutError } from './llm/errors.js';
 import { applyChosenChange } from './foldChange.js';
 import { formatUsd } from './format.js';
 import {
@@ -45,6 +46,59 @@ export interface ExtendedLlmPort extends LlmPort {
   };
 }
 
+function parsePositiveEnvNumber(key: string, defaultVal: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw.trim() === '') return defaultVal;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultVal;
+}
+
+function parseOptionalNonNegativeIntEnv(key: string): number | undefined {
+  const raw = process.env[key];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const parsed = Math.floor(Number(raw));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const record = err as {
+    status?: unknown;
+    statusCode?: unknown;
+    message?: unknown;
+  };
+  if (record.status === 429 || record.statusCode === 429) return true;
+  if (typeof record.message === 'string') {
+    return /\b429\b|RESOURCE_EXHAUSTED|rate[- ]?limit/i.test(record.message);
+  }
+  return false;
+}
+
+async function withHardTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  if (timeoutMs <= 0) {
+    throw new LlmTimeoutError(`${label} timed out after ${timeoutMs}ms`);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new LlmTimeoutError(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export interface CreateAgentOptions {
   engine: EnginePort;
   llm: LlmPort;
@@ -52,6 +106,10 @@ export interface CreateAgentOptions {
   idGen?: IdGen;
   remindersLookup?: (invoiceId: Id) => number;
   policy?: Policy;
+  runMaxSeconds?: number;
+  llmCallTimeoutSeconds?: number;
+  skipSingleEligibleDecision?: boolean;
+  maxLlmCallsPerRun?: number;
 }
 
 export interface AgentRunMetrics {
@@ -60,6 +118,7 @@ export interface AgentRunMetrics {
   retries: number;
   fallbacks: number;
   groundingFailures: number;
+  llmCalls?: number;
 }
 
 export class SettleAgent implements AgentPort {
@@ -69,12 +128,17 @@ export class SettleAgent implements AgentPort {
   private readonly idGen: IdGen;
   private readonly remindersLookup: (invoiceId: Id) => number;
   private readonly defaultPolicy?: Policy;
+  private readonly runMaxSeconds?: number;
+  private readonly llmCallTimeoutSeconds?: number;
+  private readonly skipSingleEligibleDecision?: boolean;
+  private readonly maxLlmCallsPerRun?: number;
   private lastRunMetrics: AgentRunMetrics = {
     decisions: 0,
     llmValid: 0,
     retries: 0,
     fallbacks: 0,
     groundingFailures: 0,
+    llmCalls: 0,
   };
 
   constructor(options: CreateAgentOptions) {
@@ -84,6 +148,10 @@ export class SettleAgent implements AgentPort {
     this.idGen = options.idGen ?? new DeterministicIdGen();
     this.remindersLookup = options.remindersLookup ?? (() => 0);
     this.defaultPolicy = options.policy;
+    this.runMaxSeconds = options.runMaxSeconds;
+    this.llmCallTimeoutSeconds = options.llmCallTimeoutSeconds;
+    this.skipSingleEligibleDecision = options.skipSingleEligibleDecision;
+    this.maxLlmCallsPerRun = options.maxLlmCallsPerRun;
   }
 
   getLastRunMetrics(): AgentRunMetrics {
@@ -96,12 +164,83 @@ export class SettleAgent implements AgentPort {
     const actions: ActionRecord[] = [];
     const skipped: { invoiceId: Id; why: string }[] = [];
 
+    const runStartMs = performance.now();
+    const runMaxMs =
+      (this.runMaxSeconds ?? parsePositiveEnvNumber('AGENT_RUN_MAX_SECONDS', 90)) *
+      1000;
+    const callTimeoutMs =
+      (this.llmCallTimeoutSeconds ??
+        parsePositiveEnvNumber('LLM_CALL_TIMEOUT_SECONDS', 12)) * 1000;
+
+    const maxLlmCalls =
+      this.maxLlmCallsPerRun ??
+      parseOptionalNonNegativeIntEnv('AGENT_LLM_MAX_CALLS_PER_RUN');
+    const skipSingleEligible =
+      this.skipSingleEligibleDecision === true ||
+      this.maxLlmCallsPerRun !== undefined ||
+      maxLlmCalls !== undefined;
+    let firstDiscountLlmDone = false;
+    let rateLimited = false;
+
+    // Reserve margin so remaining invoices finish cleanly via rules before hitting runMaxMs
+    const reserveMarginMs = Math.min(
+      callTimeoutMs,
+      Math.max(150, Math.floor(runMaxMs * 0.15)),
+    );
+    const isBudgetNearlyUsedUp = (): boolean => {
+      const remaining = runMaxMs - (performance.now() - runStartMs);
+      return remaining <= reserveMarginMs;
+    };
+    const isMaxCallsReached = (): boolean =>
+      maxLlmCalls !== undefined &&
+      (this.lastRunMetrics.llmCalls ?? 0) >= maxLlmCalls;
+
+    const runScopedLlm: ExtendedLlmPort = {
+      info: this.llm.info,
+      generateStructured: async <R>(args: {
+        system: string;
+        user: string;
+        jsonSchema: object;
+      }): Promise<R> => {
+        if (rateLimited) {
+          throw new LlmHttpError(
+            429,
+            'Too Many Requests',
+            'Rate limit triggered earlier in run',
+          );
+        }
+        const remaining = runMaxMs - (performance.now() - runStartMs);
+        if (remaining <= 0) {
+          throw new LlmTimeoutError('Agent run budget exhausted');
+        }
+        if (isMaxCallsReached()) {
+          throw new LlmTimeoutError('Max LLM calls per run reached');
+        }
+        this.lastRunMetrics.llmCalls = (this.lastRunMetrics.llmCalls ?? 0) + 1;
+        const effectiveTimeout = Math.max(50, Math.min(callTimeoutMs, remaining));
+        try {
+          return await withHardTimeout(
+            this.llm.generateStructured<R>(args),
+            effectiveTimeout,
+            'LLM call',
+          );
+        } catch (err) {
+          if (isRateLimitError(err)) {
+            rateLimited = true;
+          }
+          throw err;
+        }
+      },
+      runWithTools: (args) => this.llm.runWithTools(args),
+    };
+
     this.lastRunMetrics = {
       decisions: 0,
       llmValid: 0,
       retries: 0,
       fallbacks: 0,
       groundingFailures: 0,
+      llmCalls: 0,
     };
 
     // 1. Select overdue invoices
@@ -234,135 +373,52 @@ export class SettleAgent implements AgentPort {
         const candidateIds = eligible.map((c) => c.id);
         const { jsonSchema, validator } = buildDecisionSchema(candidateIds);
 
-        // 3d. LLM decision with retry ONCE + grounding check, then deterministic fallback
+        // 3d. LLM decision with budget/timeout check, retry ONCE + grounding check, then deterministic fallback
         let chosenCandidate: Candidate | null = null;
         let modelReason = '';
-        let path: 'llm' | 'fallback' = 'llm';
+        let path: 'llm' | 'fallback' | 'rules' = 'llm';
         let groundingFailed = false;
 
-        const system = buildSystemPrompt();
-        const user = buildUserPrompt({
-          invoice,
-          payer,
-          candidates: eligible,
-          situation,
-        });
+        const shouldSkipSingleEligible =
+          skipSingleEligible &&
+          eligible.length === 1 &&
+          !(!firstDiscountLlmDone && eligible[0]?.change.type === 'OFFER_DISCOUNT');
 
-        try {
-          // Attempt 1
-          const raw = await this.llm.generateStructured<{
-            optionId: string;
-            reason: string;
-          }>({
-            system,
-            user,
-            jsonSchema,
+        if (
+          isBudgetNearlyUsedUp() ||
+          isMaxCallsReached() ||
+          rateLimited ||
+          shouldSkipSingleEligible
+        ) {
+          path = 'rules';
+          chosenCandidate = deterministicChoice(eligible);
+          modelReason = templatedReason(chosenCandidate, invoice);
+        } else {
+          const system = buildSystemPrompt();
+          const user = buildUserPrompt({
+            invoice,
+            payer,
+            candidates: eligible,
+            situation,
           });
 
-          const parsed = validator.safeParse(raw);
-          if (parsed.success) {
-            const found = eligible.find((c) => c.id === parsed.data.optionId);
-            if (found) {
-              const isLengthValid = parsed.data.reason.length <= 240;
-              const candFacts: GroundingFactsInput = {
-                invoice,
-                payer,
-                change: found.change,
-                cashCost: found.cashCost,
-                lowestDelta: found.lowestDelta,
-                shortfallDelta: found.shortfallDelta,
-                asOf: snapshot.business.asOf,
-              };
-              const candAllowed = buildAllowedSet(candFacts);
-              const groundCheck = checkGrounding(parsed.data.reason, candAllowed);
-
-              if (groundCheck.ok && isLengthValid) {
-                chosenCandidate = found;
-                modelReason = parsed.data.reason;
-                this.lastRunMetrics.llmValid += 1;
-              } else {
-                groundingFailed = true;
-                this.lastRunMetrics.groundingFailures += 1;
-                this.lastRunMetrics.retries += 1;
-
-                // Retry ONCE with feedback on ungrounded offenders / length
-                const failureDetails = [
-                  !isLengthValid ? 'Reason exceeds 240 characters' : '',
-                  !groundCheck.ok
-                    ? `Contains ungrounded or forbidden tokens: ${groundCheck.offenders.join(', ')}`
-                    : '',
-                ]
-                  .filter(Boolean)
-                  .join('; ');
-
-                const retryPrompt = `${user}\n\nPREVIOUS REASON FAILED VALIDATION: ${failureDetails}.\nPlease write 1-2 plain English sentences (<= 240 characters) naming the payer and invoice, action in words, effect in dollars ($) and dates. Do not include option IDs, "cents", "lowestDelta", "cashCost", or "closesGap".`;
-                const retryRaw = await this.llm.generateStructured<{
-                  optionId: string;
-                  reason: string;
-                }>({
-                  system,
-                  user: retryPrompt,
-                  jsonSchema,
-                });
-
-                const retryParsed = validator.safeParse(retryRaw);
-                if (retryParsed.success) {
-                  const retryFound = eligible.find(
-                    (c) => c.id === retryParsed.data.optionId,
-                  );
-                  if (retryFound) {
-                    const retryAllowed = buildAllowedSet({
-                      invoice,
-                      payer,
-                      change: retryFound.change,
-                      cashCost: retryFound.cashCost,
-                      lowestDelta: retryFound.lowestDelta,
-                      shortfallDelta: retryFound.shortfallDelta,
-                      asOf: snapshot.business.asOf,
-                    });
-                    const retryGround = checkGrounding(
-                      retryParsed.data.reason,
-                      retryAllowed,
-                    );
-                    const retryLengthValid = retryParsed.data.reason.length <= 240;
-                    if (retryGround.ok && retryLengthValid) {
-                      chosenCandidate = retryFound;
-                      modelReason = retryParsed.data.reason;
-                      this.lastRunMetrics.llmValid += 1;
-                    } else {
-                      this.lastRunMetrics.groundingFailures += 1;
-                      // Keep model's chosen option if valid, but fall back to templated reason
-                      path = 'fallback';
-                      this.lastRunMetrics.fallbacks += 1;
-                      chosenCandidate = retryFound;
-                      modelReason = templatedReason(retryFound, invoice);
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-          // Retry ONCE if invalid schema or optionId
-          if (!chosenCandidate && !groundingFailed) {
-            this.lastRunMetrics.retries += 1;
-            const retryPrompt = `${user}\n\nPREVIOUS ATTEMPT WAS INVALID. Please choose one valid optionId from: ${candidateIds.join(', ')} and provide an owner-facing reason (<= 240 chars).`;
-            const retryRaw = await this.llm.generateStructured<{
+          try {
+            // Attempt 1
+            const raw = await runScopedLlm.generateStructured<{
               optionId: string;
               reason: string;
             }>({
               system,
-              user: retryPrompt,
+              user,
               jsonSchema,
             });
 
-            const retryParsed = validator.safeParse(retryRaw);
-            if (retryParsed.success) {
-              const found = eligible.find(
-                (c) => c.id === retryParsed.data.optionId,
-              );
+            const parsed = validator.safeParse(raw);
+            if (parsed.success) {
+              const found = eligible.find((c) => c.id === parsed.data.optionId);
               if (found) {
-                const candAllowed = buildAllowedSet({
+                const isLengthValid = parsed.data.reason.length <= 240;
+                const candFacts: GroundingFactsInput = {
                   invoice,
                   payer,
                   change: found.change,
@@ -370,33 +426,147 @@ export class SettleAgent implements AgentPort {
                   lowestDelta: found.lowestDelta,
                   shortfallDelta: found.shortfallDelta,
                   asOf: snapshot.business.asOf,
-                });
-                const groundCheck = checkGrounding(retryParsed.data.reason, candAllowed);
-                const retryLengthValid = retryParsed.data.reason.length <= 240;
-                if (groundCheck.ok && retryLengthValid) {
+                };
+                const candAllowed = buildAllowedSet(candFacts);
+                const groundCheck = checkGrounding(parsed.data.reason, candAllowed);
+
+                if (groundCheck.ok && isLengthValid) {
                   chosenCandidate = found;
-                  modelReason = retryParsed.data.reason;
+                  modelReason = parsed.data.reason;
                   this.lastRunMetrics.llmValid += 1;
                 } else {
+                  groundingFailed = true;
                   this.lastRunMetrics.groundingFailures += 1;
-                  path = 'fallback';
-                  this.lastRunMetrics.fallbacks += 1;
-                  chosenCandidate = found;
-                  modelReason = templatedReason(found, invoice);
+
+                  if (!isBudgetNearlyUsedUp() && !isMaxCallsReached() && !rateLimited) {
+                    this.lastRunMetrics.retries += 1;
+
+                    // Retry ONCE with feedback on ungrounded offenders / length
+                    const failureDetails = [
+                      !isLengthValid ? 'Reason exceeds 240 characters' : '',
+                      !groundCheck.ok
+                        ? `Contains ungrounded or forbidden tokens: ${groundCheck.offenders.join(', ')}`
+                        : '',
+                    ]
+                      .filter(Boolean)
+                      .join('; ');
+
+                    const retryPrompt = `${user}\n\nPREVIOUS REASON FAILED VALIDATION: ${failureDetails}.\nPlease write 1-2 plain English sentences (<= 240 characters) naming the payer and invoice, action in words, effect in dollars ($) and dates. Do not include option IDs, "cents", "lowestDelta", "cashCost", or "closesGap".`;
+                    const retryRaw = await runScopedLlm.generateStructured<{
+                      optionId: string;
+                      reason: string;
+                    }>({
+                      system,
+                      user: retryPrompt,
+                      jsonSchema,
+                    });
+
+                    const retryParsed = validator.safeParse(retryRaw);
+                    if (retryParsed.success) {
+                      const retryFound = eligible.find(
+                        (c) => c.id === retryParsed.data.optionId,
+                      );
+                      if (retryFound) {
+                        const retryAllowed = buildAllowedSet({
+                          invoice,
+                          payer,
+                          change: retryFound.change,
+                          cashCost: retryFound.cashCost,
+                          lowestDelta: retryFound.lowestDelta,
+                          shortfallDelta: retryFound.shortfallDelta,
+                          asOf: snapshot.business.asOf,
+                        });
+                        const retryGround = checkGrounding(
+                          retryParsed.data.reason,
+                          retryAllowed,
+                        );
+                        const retryLengthValid = retryParsed.data.reason.length <= 240;
+                        if (retryGround.ok && retryLengthValid) {
+                          chosenCandidate = retryFound;
+                          modelReason = retryParsed.data.reason;
+                          this.lastRunMetrics.llmValid += 1;
+                        } else {
+                          this.lastRunMetrics.groundingFailures += 1;
+                          path = 'fallback';
+                          this.lastRunMetrics.fallbacks += 1;
+                          chosenCandidate = retryFound;
+                          modelReason = templatedReason(retryFound, invoice);
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
-          }
-        } catch {
-          // LLM call threw error; proceed to fallback
-        }
 
-        // Complete fallback if LLM produced no valid candidate
-        if (!chosenCandidate) {
-          path = 'fallback';
-          this.lastRunMetrics.fallbacks += 1;
-          chosenCandidate = deterministicChoice(eligible);
-          modelReason = templatedReason(chosenCandidate, invoice);
+            // Retry ONCE if invalid schema or optionId
+            if (
+              !chosenCandidate &&
+              !groundingFailed &&
+              !isBudgetNearlyUsedUp() &&
+              !isMaxCallsReached() &&
+              !rateLimited
+            ) {
+              this.lastRunMetrics.retries += 1;
+              const retryPrompt = `${user}\n\nPREVIOUS ATTEMPT WAS INVALID. Please choose one valid optionId from: ${candidateIds.join(', ')} and provide an owner-facing reason (<= 240 chars).`;
+              const retryRaw = await runScopedLlm.generateStructured<{
+                optionId: string;
+                reason: string;
+              }>({
+                system,
+                user: retryPrompt,
+                jsonSchema,
+              });
+
+              const retryParsed = validator.safeParse(retryRaw);
+              if (retryParsed.success) {
+                const found = eligible.find(
+                  (c) => c.id === retryParsed.data.optionId,
+                );
+                if (found) {
+                  const candAllowed = buildAllowedSet({
+                    invoice,
+                    payer,
+                    change: found.change,
+                    cashCost: found.cashCost,
+                    lowestDelta: found.lowestDelta,
+                    shortfallDelta: found.shortfallDelta,
+                    asOf: snapshot.business.asOf,
+                  });
+                  const groundCheck = checkGrounding(retryParsed.data.reason, candAllowed);
+                  const retryLengthValid = retryParsed.data.reason.length <= 240;
+                  if (groundCheck.ok && retryLengthValid) {
+                    chosenCandidate = found;
+                    modelReason = retryParsed.data.reason;
+                    this.lastRunMetrics.llmValid += 1;
+                  } else {
+                    this.lastRunMetrics.groundingFailures += 1;
+                    path = 'fallback';
+                    this.lastRunMetrics.fallbacks += 1;
+                    chosenCandidate = found;
+                    modelReason = templatedReason(found, invoice);
+                  }
+                }
+              }
+            }
+          } catch {
+            // LLM call threw error or timed out; proceed to fallback
+          }
+
+          // Complete fallback if LLM produced no valid candidate
+          if (!chosenCandidate) {
+            path = 'fallback';
+            this.lastRunMetrics.fallbacks += 1;
+            chosenCandidate = deterministicChoice(eligible);
+            modelReason = templatedReason(chosenCandidate, invoice);
+          }
+
+          if (
+            path === 'llm' &&
+            chosenCandidate.change.type === 'OFFER_DISCOUNT'
+          ) {
+            firstDiscountLlmDone = true;
+          }
         }
 
         // 3e. Map chosen change to ActionType and preliminary ActionParams
@@ -464,15 +634,26 @@ export class SettleAgent implements AgentPort {
             asOf: snapshot.business.asOf,
           };
 
-          const note = await draftNote(
-            {
-              action: { type: actionType, params: actionParams },
-              invoice,
-              payer,
-              facts: candFacts,
-            },
-            this.llm,
-          );
+          const note =
+            path === 'rules' ||
+            isBudgetNearlyUsedUp() ||
+            isMaxCallsReached() ||
+            rateLimited
+              ? fallbackDraftNote({
+                  action: { type: actionType, params: actionParams },
+                  invoice,
+                  payer,
+                  facts: candFacts,
+                })
+              : await draftNote(
+                  {
+                    action: { type: actionType, params: actionParams },
+                    invoice,
+                    payer,
+                    facts: candFacts,
+                  },
+                  runScopedLlm,
+                );
           actionParams.note = note;
         }
 
@@ -504,7 +685,9 @@ export class SettleAgent implements AgentPort {
         }
 
         // 3h. Append provenance suffix
-        if (path === 'llm') {
+        if (path === 'rules') {
+          fullReason = `${fullReason} [via rules; path=rules]`;
+        } else if (path === 'llm') {
           const llmInfo = this.llm.info ?? {
             provider: 'mock',
             model: 'mock-model',

@@ -79,7 +79,7 @@ export const DemoControls: React.FC = () => {
     >
       <div className="flex items-center justify-between border-b border-border pb-1.5">
         <span className="font-semibold text-muted uppercase tracking-wider text-[10px]">
-          Demo controls (not part of the product)
+          Demo controls
         </span>
       </div>
 

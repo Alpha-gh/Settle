@@ -18,8 +18,10 @@ import {
   auditEventSchema,
   policySchema,
   agentRunResultSchema,
+  agentStatusSchema,
   chatAnswerSchema,
   type DashboardResponse,
+  type AgentStatus,
 } from './schemas';
 import {
   deriveImpactSummary,
@@ -35,6 +37,7 @@ export const QUERY_KEYS = {
   audit: ['audit'] as const,
   policy: ['policy'] as const,
   impact: ['impact'] as const,
+  agentStatus: ['agentStatus'] as const,
 };
 
 export function useDashboard() {
@@ -121,6 +124,15 @@ export function useImpact() {
         gapClosed: false,
       };
     },
+  });
+}
+
+export function useAgentStatus(enabled = false) {
+  return useQuery<AgentStatus>({
+    queryKey: QUERY_KEYS.agentStatus,
+    queryFn: () => apiRequest(ENDPOINTS.agentStatus(), agentStatusSchema),
+    enabled,
+    refetchInterval: enabled ? 2000 : false,
   });
 }
 
