@@ -133,6 +133,10 @@ export interface AgentModuleExports {
     idGen?: unknown;
     remindersLookup?: (invoiceId: Id) => number;
     policy?: Policy;
+    skipSingleEligibleDecision?: boolean;
+    maxLlmCallsPerRun?: number;
+    runMaxSeconds?: number;
+    llmCallTimeoutSeconds?: number;
   }) => AgentPort;
   createLlmFromEnv: (env?: Record<string, string | undefined>) => LlmPort & {
     info?: { provider: string; model: string };
@@ -259,6 +263,8 @@ export async function getAgent(): Promise<AgentPort> {
       engine,
       llm: trackedLlm,
       clock,
+      runMaxSeconds: env.AGENT_RUN_MAX_SECONDS,
+      llmCallTimeoutSeconds: env.LLM_CALL_TIMEOUT_SECONDS,
     });
 
     return agentInstance;
