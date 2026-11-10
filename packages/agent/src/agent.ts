@@ -19,7 +19,7 @@ import { runChat } from './chat/chat.js';
 import { SystemClock, type Clock } from './clock.js';
 import { draftNote, fallbackDraftNote } from './draftNote.js';
 import { deterministicChoice, templatedReason } from './fallback.js';
-import { LlmTimeoutError } from './llm/errors.js';
+import { LlmHttpError, LlmTimeoutError } from './llm/errors.js';
 import { applyChosenChange } from './foldChange.js';
 import { formatUsd } from './format.js';
 import {
@@ -58,6 +58,20 @@ function parseOptionalNonNegativeIntEnv(key: string): number | undefined {
   if (raw === undefined || raw.trim() === '') return undefined;
   const parsed = Math.floor(Number(raw));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function isRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const record = err as {
+    status?: unknown;
+    statusCode?: unknown;
+    message?: unknown;
+  };
+  if (record.status === 429 || record.statusCode === 429) return true;
+  if (typeof record.message === 'string') {
+    return /\b429\b|RESOURCE_EXHAUSTED|rate[- ]?limit/i.test(record.message);
+  }
+  return false;
 }
 
 async function withHardTimeout<T>(
@@ -166,6 +180,7 @@ export class SettleAgent implements AgentPort {
       this.maxLlmCallsPerRun !== undefined ||
       maxLlmCalls !== undefined;
     let firstDiscountLlmDone = false;
+    let rateLimited = false;
 
     // Reserve margin so remaining invoices finish cleanly via rules before hitting runMaxMs
     const reserveMarginMs = Math.min(
@@ -187,6 +202,13 @@ export class SettleAgent implements AgentPort {
         user: string;
         jsonSchema: object;
       }): Promise<R> => {
+        if (rateLimited) {
+          throw new LlmHttpError(
+            429,
+            'Too Many Requests',
+            'Rate limit triggered earlier in run',
+          );
+        }
         const remaining = runMaxMs - (performance.now() - runStartMs);
         if (remaining <= 0) {
           throw new LlmTimeoutError('Agent run budget exhausted');
@@ -196,11 +218,18 @@ export class SettleAgent implements AgentPort {
         }
         this.lastRunMetrics.llmCalls = (this.lastRunMetrics.llmCalls ?? 0) + 1;
         const effectiveTimeout = Math.max(50, Math.min(callTimeoutMs, remaining));
-        return await withHardTimeout(
-          this.llm.generateStructured<R>(args),
-          effectiveTimeout,
-          'LLM call',
-        );
+        try {
+          return await withHardTimeout(
+            this.llm.generateStructured<R>(args),
+            effectiveTimeout,
+            'LLM call',
+          );
+        } catch (err) {
+          if (isRateLimitError(err)) {
+            rateLimited = true;
+          }
+          throw err;
+        }
       },
       runWithTools: (args) => this.llm.runWithTools(args),
     };
@@ -358,6 +387,7 @@ export class SettleAgent implements AgentPort {
         if (
           isBudgetNearlyUsedUp() ||
           isMaxCallsReached() ||
+          rateLimited ||
           shouldSkipSingleEligible
         ) {
           path = 'rules';
@@ -408,7 +438,7 @@ export class SettleAgent implements AgentPort {
                   groundingFailed = true;
                   this.lastRunMetrics.groundingFailures += 1;
 
-                  if (!isBudgetNearlyUsedUp() && !isMaxCallsReached()) {
+                  if (!isBudgetNearlyUsedUp() && !isMaxCallsReached() && !rateLimited) {
                     this.lastRunMetrics.retries += 1;
 
                     // Retry ONCE with feedback on ungrounded offenders / length
@@ -474,7 +504,8 @@ export class SettleAgent implements AgentPort {
               !chosenCandidate &&
               !groundingFailed &&
               !isBudgetNearlyUsedUp() &&
-              !isMaxCallsReached()
+              !isMaxCallsReached() &&
+              !rateLimited
             ) {
               this.lastRunMetrics.retries += 1;
               const retryPrompt = `${user}\n\nPREVIOUS ATTEMPT WAS INVALID. Please choose one valid optionId from: ${candidateIds.join(', ')} and provide an owner-facing reason (<= 240 chars).`;
@@ -604,7 +635,10 @@ export class SettleAgent implements AgentPort {
           };
 
           const note =
-            path === 'rules' || isBudgetNearlyUsedUp() || isMaxCallsReached()
+            path === 'rules' ||
+            isBudgetNearlyUsedUp() ||
+            isMaxCallsReached() ||
+            rateLimited
               ? fallbackDraftNote({
                   action: { type: actionType, params: actionParams },
                   invoice,
