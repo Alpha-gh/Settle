@@ -85,9 +85,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
         scriptSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'"],
       },
     },
     crossOriginEmbedderPolicy: false,
@@ -220,6 +222,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       root: webDistPath,
       prefix: '/',
       wildcard: false,
+      index: false,
     });
   }
 
@@ -261,7 +264,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 404 Handler with SPA fallback
   app.setNotFoundHandler((request, reply) => {
-    if (webDistPath && request.method === 'GET' && !request.url.startsWith('/api') && !request.url.startsWith('/health')) {
+    if (
+      webDistPath &&
+      request.method === 'GET' &&
+      !request.url.startsWith('/api') &&
+      !request.url.startsWith('/health') &&
+      !request.url.startsWith('/assets/')
+    ) {
       return reply.sendFile('index.html');
     }
     reply.status(404).send({

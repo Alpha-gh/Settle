@@ -1,0 +1,145 @@
+# Settle Web (System 4)
+
+Production web application frontend for Settle (React 18 + Vite + TypeScript strict).
+System 4 delivers the human-in-the-loop dashboard, real-time liquidity forecasting, AG Grid receivables worklist, PayPal action approval drawer, conversational Co-pilot, immutable audit trail, and policy rules editor.
+
+---
+
+## 1. Prerequisites & Setup
+
+- **Node.js**: `v20.x` or `v22.x`
+- **Package Manager**: `pnpm` (v9 or v10)
+- **Browser for E2E Tests**: Microsoft Edge (pre-installed on Windows) or Chromium CDP engine
+
+### Install Dependencies
+From the repository root:
+```bash
+pnpm install
+```
+
+---
+
+## 2. Environment Variables
+
+| Variable | Default | Purpose & Description |
+| :--- | :--- | :--- |
+| `VITE_USE_MOCKS` | `false` | Set to `"true"` to enable Mock Service Worker (MSW) and the in-memory mock event bus for standalone UI development without a running backend. Unset or `"false"` runs against the real API. |
+| `VITE_API_BASE` | `""` (unset/empty) | Optional base URL for REST API and SSE stream (`${VITE_API_BASE}/api/events`). When empty in live mode, requests use same-origin relative paths (proxied to `http://localhost:3000` during `vite` dev or served directly by `apps/api` in production). |
+| `VITE_MOCK_LATENCY_MS`| `250` | Simulated network latency in milliseconds for MSW request handlers when `VITE_USE_MOCKS=true` (overridden to `100` during Playwright E2E tests for speed). |
+
+---
+
+## 3. Running & Development
+
+### Start Development Server (Live API)
+```bash
+pnpm --filter web dev
+```
+Runs Vite on [http://localhost:5173/](http://localhost:5173/) and proxies `/api` and `/health` requests to `http://localhost:3000`.
+
+### Start Development Server (Standalone Mock Mode)
+```bash
+pnpm --filter web dev:mock
+```
+Runs Vite with `VITE_USE_MOCKS=true` using MSW in the browser.
+
+To experience the guided interactive demo story, navigate to:
+```
+http://localhost:5173/?demo=1
+```
+
+### Static Type Checking
+```bash
+pnpm --filter web typecheck
+```
+Executes strict TypeScript check (`tsc --noEmit`).
+
+### Linting
+```bash
+pnpm --filter web lint
+```
+Runs ESLint with zero allowed warnings/errors across all source files and test suites.
+
+### Unit & Integration Tests
+```bash
+pnpm --filter web test
+```
+Executes Vitest suite (148 tests across 27 test files covering components, formatting, derivations, schema validation, WCAG AA contrast, error recovery with retry, and grep guard enforcement).
+
+### Playwright End-to-End Tests
+```bash
+pnpm --filter web test:e2e
+```
+Runs full Playwright suite (12 tests across smoke flow, accessibility audits, test IDs, and 200-row virtualization performance) with a strict zero-console-error and zero-warning fixture.
+
+### Production Build
+```bash
+pnpm --filter web build
+```
+Typechecks and compiles production bundle to `dist/`. Chunks are optimized via `manualChunks` to keep all assets < 235 kB gzipped.
+
+---
+
+## 4. Architecture & Directory Structure
+
+```
+apps/web/
+├── e2e/                           # Playwright E2E specifications
+│   ├── fixtures.ts                # Strict error-capturing fixture (console/page errors)
+│   ├── smoke.spec.ts              # Continuous 3-minute demo flow (steps a-g)
+│   ├── a11y.spec.ts               # Axe WCAG 2.1 AA audits on all routes + drawers
+│   ├── testids.spec.ts            # Coverage verification of data-testids
+│   └── perf.spec.ts               # 200-row AG Grid virtualized performance
+├── src/
+│   ├── api/                       # Data fetching, queries, schemas, and event bus
+│   │   ├── bus.ts                 # Reactive SSE event bus adapter
+│   │   ├── client.ts              # Fetch client, Zod guard, and API error humanizer
+│   │   ├── endpoints.ts           # Single source of truth for API URL endpoints
+│   │   ├── impactAdapter.ts       # Client-side impact derivation from dashboard data
+│   │   ├── queries.ts             # TanStack Query hooks & mutations
+│   │   ├── schemas.ts             # Strict Zod schemas with AssertEqual contract checks
+│   │   ├── selectors.ts           # Pure snapshot + actions worklist row joins
+│   │   └── sse.tsx                # SseProvider with exponential backoff & cache reconciliation
+│   ├── components/                # Modular UI components
+│   │   ├── ActionDrawer.tsx       # Side drawer with PayPal execution timeline
+│   │   ├── AppShell.tsx           # Layout, header, navigation, and sandbox badge
+│   │   ├── AuditTimeline.tsx      # Immutable audit trail with actor filtering
+│   │   ├── BalanceChart.tsx       # AG Charts 30-day liquidity forecast & breach markers
+│   │   ├── BreachBanner.tsx       # Alert banner for predicted reserve breaches
+│   │   ├── Copilot.tsx            # Conversational Co-pilot slide-over with charts
+│   │   ├── DemoControls.tsx       # Floating interactive demo panel (?demo=1)
+│   │   ├── DevErrorOverlay.tsx    # Dev-only full-screen Zod schema failure overlay
+│   │   ├── GapClosedBanner.tsx    # Success banner when reserve shortfall is resolved
+│   │   ├── ImpactCard.tsx         # Before vs After liquidity recovery metrics
+│   │   ├── KpiCards.tsx           # Cash today, lowest balance, shortfall, overdue
+│   │   ├── PolicyForm.tsx         # React Hook Form + Zod policy rules editor
+│   │   └── Worklist.tsx           # High-performance AG Grid virtualized receivables
+│   ├── lib/                       # Core utilities & derivations
+│   │   ├── derive.ts              # Permitted financial derivations (daysOverdue in UTC)
+│   │   └── format.ts              # Integer-math USD formatter, UTC dates, humanizer
+│   ├── mocks/                     # Standalone MSW fixtures, handlers, and state machine
+│   ├── pages/                     # Routed pages (/, /receivables, /audit, /policy)
+│   ├── state/                     # URL search param synchronization & breach memory
+│   ├── test/                      # Test setup, matchers, and JSDOM mocks
+│   ├── index.css                  # Tailwind styles and AG Charts/Grid overrides
+│   ├── main.tsx                   # App bootstrap with MSW conditional initialization
+│   ├── routes.tsx                 # React Router route declarations
+│   └── testids.ts                 # Centralized test ID constants (TID)
+├── AGENT_RULES.md                 # 10 Non-Negotiable Operational & Financial Rules
+├── CONTRACT_CHANGE_REQUEST.md     # Formal CCR for System 1 / 2 / 3 leads
+├── HANDOFF.md                     # Comprehensive technical handoff & rehearsal shot list
+├── package.json                   # Dependencies, scripts, and package metadata
+├── playwright.config.ts           # Playwright configuration
+├── tsconfig.json                  # Strict TypeScript configuration
+└── vite.config.ts                 # Vite bundler configuration & code splitting
+```
+
+---
+
+## 5. API Integration Notes
+
+- Dashboard data (`business`, `kpis`, `forecast`, `invoices`, `payers`, `obligations`, `policy`, `recentActions`) is fetched from the composite `GET /api/dashboard` endpoint and projected to React Query cache slices.
+- Simulated payments post `{ invoiceId, amount? }` to `POST /api/demo/simulate-payment`.
+- Failed actions offer **"Run Settle again"** (`POST /api/agent/run`) rather than retrying terminal action records.
+- Impact Card metrics (baseline vs working lowest balance, shortfall reduction, cash given up in discounts) are derived strictly client-side from dashboard state and sessionStorage baseline snapshots.
+- Domain types are imported from `@settle/shared` via workspace reference.

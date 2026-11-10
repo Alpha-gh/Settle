@@ -151,4 +151,14 @@ To receive live asynchronous payment notifications (`INVOICING.INVOICE.PAID`) wh
 5. Set Key: `GEMINI_API_KEY` and Value: `<your-api-key>`.
 6. Save changes; Render will redeploy automatically with active live LLM reasoning.
 
+---
+
+## 7. Web Frontend Build & Same-Origin Static Hosting
+
+- **Docker Builder Stage:** Builds `@settle/shared`, `@settle/engine`, `@settle/agent`, `@settle/api`, and finally the React SPA (`VITE_USE_MOCKS="" VITE_API_BASE="" pnpm --filter web build`).
+- **Docker Runner Stage:** Copies compiled frontend artifacts (`apps/web/dist`) into `/app/apps/web/dist`.
+- **Fastify Static & SPA Fallback:** `apps/api` automatically detects `apps/web/dist` and registers `@fastify/static` (with `index: false` so `GET /` serves `index.html` cleanly without route duplication). Client-side routes (`/receivables`, `/audit`, `/policy`) fall back to `index.html` while `/api/*`, `/health`, and `/assets/*` are excluded from the fallback.
+- **Same-Origin Operation:** With `VITE_USE_MOCKS` disabled and `VITE_API_BASE` empty, the frontend makes relative requests (`/api/dashboard`, `/api/events`, etc.) to the same origin, requiring zero cross-origin configuration in production.
+- **Content Security Policy:** Helmet CSP allows `'self'`, inline styles (`'unsafe-inline'` for AG Grid/AG Charts), and Google Fonts (`https://fonts.googleapis.com` and `https://fonts.gstatic.com`).
+
 

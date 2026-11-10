@@ -37,7 +37,7 @@ describe('Hardening, Security & Deployment Features (Stage 5)', () => {
     });
   });
 
-  it('GET / returns the HTML landing page with 200 and never a bare 404', async () => {
+  it('GET / returns the HTML landing page or built SPA with 200 and never a bare 404', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/',
@@ -45,9 +45,20 @@ describe('Hardening, Security & Deployment Features (Stage 5)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/html');
-    expect(res.payload).toContain('Settle Core API');
-    expect(res.payload).toContain('/health');
-    expect(res.payload).toContain('/api/dashboard');
+    const isSpa = res.payload.includes('<div id="root"></div>');
+    const isFallback = res.payload.includes('Settle Core API');
+    expect(isSpa || isFallback).toBe(true);
+    if (isSpa) {
+      expect(res.payload).toContain('Settle');
+      // SPA client routes also resolve to index.html
+      const routeRes = await app.inject({ method: 'GET', url: '/receivables' });
+      expect(routeRes.statusCode).toBe(200);
+      expect(routeRes.headers['content-type']).toContain('text/html');
+      expect(routeRes.payload).toContain('<div id="root"></div>');
+    } else {
+      expect(res.payload).toContain('/health');
+      expect(res.payload).toContain('/api/dashboard');
+    }
   });
 
   it('sets security headers via Helmet', async () => {
