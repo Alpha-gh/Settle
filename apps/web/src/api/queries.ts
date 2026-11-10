@@ -243,17 +243,20 @@ export function useDemoSimulatePayment() {
   return useMutation<
     { status: string; invoice?: unknown; cashBalance?: number },
     Error,
-    { invoiceId: string }
+    { invoiceId: string; amount?: number }
   >({
-    mutationFn: ({ invoiceId }) =>
+    mutationFn: ({ invoiceId, amount }) =>
       apiRequest(
-        ENDPOINTS.demoSimulatePayment(invoiceId),
+        ENDPOINTS.demoSimulatePayment(),
         z.object({
           status: z.string(),
           invoice: z.unknown().optional(),
           cashBalance: z.number().int().optional(),
-        }),
-        { method: 'POST', body: '{}' },
+        }).passthrough(),
+        {
+          method: 'POST',
+          body: JSON.stringify({ invoiceId, amount }),
+        },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });

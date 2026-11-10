@@ -291,19 +291,19 @@ export class MockStateMachine {
     return retryingAction;
   }
 
-  simulatePayment(invoiceId: string): { status: string; invoice: Invoice; cashBalance: number } {
+  simulatePayment(invoiceId: string, amount?: number): { status: string; invoice: Invoice; cashBalance: number } {
     const invIndex = this.invoices.findIndex((i) => i.id === invoiceId);
     if (invIndex === -1) {
       throw new Error(`Invoice not found: ${invoiceId}`);
     }
 
     const currentInv = this.invoices[invIndex]!;
-    const delta = currentInv.amount - currentInv.amountPaid;
+    const delta = amount !== undefined ? amount : (currentInv.amount - currentInv.amountPaid);
 
     const paidInvoice: Invoice = {
       ...currentInv,
       status: 'PAID',
-      amountPaid: currentInv.amount,
+      amountPaid: currentInv.amountPaid + delta,
     };
     this.invoices[invIndex] = paidInvoice;
 

@@ -16,6 +16,6 @@ export const ENDPOINTS = {
   events: () => '/api/events',
   impact: () => '/api/impact',
   demoReset: () => '/api/demo/reset',
-  demoSimulatePayment: (invoiceId: string) => `/api/demo/simulate-payment/${encodeURIComponent(invoiceId)}`,
+  demoSimulatePayment: () => '/api/demo/simulate-payment',
 } as const;
 

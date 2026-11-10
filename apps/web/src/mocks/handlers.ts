@@ -132,11 +132,11 @@ export const handlers = [
     return HttpResponse.json({ status: 'ok' });
   }),
 
-  // 15. POST /api/demo/simulate-payment/:invoiceId
-  http.post('/api/demo/simulate-payment/:invoiceId', async ({ params }) => {
+  // 15. POST /api/demo/simulate-payment
+  http.post('/api/demo/simulate-payment', async ({ request }) => {
     await delay(getLatency());
-    const invoiceId = params['invoiceId'] as string;
-    const result = mockState.simulatePayment(invoiceId);
+    const body = (await request.json()) as { invoiceId: string; amount?: number };
+    const result = mockState.simulatePayment(body.invoiceId, body.amount);
     return HttpResponse.json(result);
   }),
 ];
