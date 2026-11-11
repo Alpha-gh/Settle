@@ -133,6 +133,18 @@ export const handlers = [
     return HttpResponse.json({ status: 'ok' });
   }),
 
+  // 14b. POST /api/demo/provision-paypal
+  http.post('/api/demo/provision-paypal', async () => {
+    await delay(getLatency());
+    return HttpResponse.json({
+      provisioned: 12,
+      skipped: 2,
+      failed: 0,
+      remaining: 0,
+      failures: [],
+    });
+  }),
+
   // 15. POST /api/demo/simulate-payment
   http.post('/api/demo/simulate-payment', async ({ request }) => {
     await delay(getLatency());

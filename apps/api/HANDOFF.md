@@ -34,6 +34,11 @@ All environment variables are validated at startup via `validateEnv()` in `src/c
 | `GEMINI_API_KEY` | No | - | Google Gemini API key for real generative recovery actions and Q&A (free tier available at https://aistudio.google.com/). |
 | `ANTHROPIC_API_KEY` | No | - | Anthropic Claude API key for agent reasoning. |
 | `OPENAI_API_KEY` | No | - | OpenAI API key (alternative LLM backend). |
+| `PROVISION_BUDGET_SECONDS` | No | `60` | Time budget in seconds for `POST /api/demo/provision-paypal` before pausing and returning `remaining`. |
+| `AGENT_RUN_LOCK_TTL_SECONDS` | No | `150` | TTL after which a stale in-memory agent run lock is automatically released. |
+| `AGENT_RUN_MAX_SECONDS` | No | `90` | Max budget for `POST /api/agent/run` before finishing remaining invoices with rules. |
+| `LLM_CALL_TIMEOUT_SECONDS` | No | `12` | Per-call hard timeout for upstream LLM requests. |
+| `AGENT_LLM_MAX_CALLS_PER_RUN` | No | `4` | Max LLM calls allowed per agent run cycle. |
 
 ---
 
@@ -92,8 +97,8 @@ All error responses strictly follow the shape:
 - **`GET /health`**: Connectivity check. Executes `SELECT 1` against PostgreSQL. Returns `200 { "status": "ok", "database": "connected" }` or `503 { "status": "error", "database": "disconnected" }`.
 
 ### Core Business Endpoints
-- **`GET /api/dashboard`**: Full dashboard state strictly conforming to Contract v1.
-  - *Response*: `{ "business": Business, "kpis": KPIs, "forecast": CashForecast, "invoices": Invoice[], "payers": Payer[], "obligations": Obligation[] }`
+- **`GET /api/dashboard`**: Full dashboard state strictly conforming to Contract v1 (drops invalid rows individually with a logged error and populates `warnings?: string[]` instead of failing the whole dashboard).
+  - *Response*: `{ "business": Business, "kpis": KPIs, "forecast": CashForecast, "invoices": Invoice[], "payers": Payer[], "obligations": Obligation[], "warnings"?: string[] }`
 - **`GET /api/invoices`**: Returns all 14 invoices in Maya Studio scenario.
   - *Response*: `Invoice[]`
 - **`GET /api/actions`**: Lists proposed and executed recovery actions (newest first). Supports optional `?open=true` query parameter to return only open actions (`PROPOSED`, `AWAITING_APPROVAL`, `BLOCKED`, `APPROVED`).
@@ -114,8 +119,9 @@ All error responses strictly follow the shape:
 - **`POST /api/chat`**: Natural language Q&A regarding cashflow, risk, and recovery recommendations.
   - *Body*: `{ "question": string }`
   - *Response*: `{ "text": string, "toolCalls"?: any[], "forecast"?: CashForecast }`
-- **`GET /api/audit`**: Append-only audit log (read-only; no update/delete paths exist).
-  - *Response*: `AuditEvent[]`
+- **`GET /api/audit`**: Append-only audit log (read-only; no update/delete paths exist). Drops corrupt rows individually instead of failing (`x-settle-warnings` header or `?includeWarnings=true`).
+  - *Response*: `AuditEvent[]` (valid actors: `'agent' | 'owner' | 'paypal' | 'system'`)
+- **`GET /api/agent/status`**: Current in-memory run lock state (`{ "running": boolean, "startedAt": string | null, "ageSeconds": number }`).
 - **`GET /api/policy`**: Retrieve active collections policy (defaults: `maxDiscountPct: 5`, `maxInstalments: 3`, `autoApproveMaxAmount: 150000` [$1,500], `requireApprovalFor: ['OFFER_DISCOUNT', 'OFFER_INSTALMENTS', 'ESCALATE']`, `quietHours: 20:00-08:00`, `maxRemindersPerInvoicePerWeek: 2`).
   - *Response*: `Policy`
 - **`PUT /api/policy`**: Update policy parameters (max discount, instalments, quiet hours, autoApproveMaxAmount).
@@ -123,8 +129,9 @@ All error responses strictly follow the shape:
   - *Response*: `Policy`
 
 ### Demo & PayPal Endpoints
-- **`POST /api/demo/reset`**: Idempotent reset. Archives PayPal mappings, truncates transactional tables, and restores Maya Studio baseline seed data.
-- **`POST /api/demo/provision-paypal`**: Provisions demo candidate invoices in PayPal Sandbox and returns live payment URLs (`payUrl`).
+- **`POST /api/demo/reset`**: Idempotent reset. Runs audit-actor repair migration, archives PayPal mappings, truncates transactional tables, and restores Maya Studio baseline seed data.
+- **`POST /api/demo/provision-paypal`**: Provisions `SENT` invoices missing `paypalInvoiceId` with concurrency 3 within `PROVISION_BUDGET_SECONDS`, looking up existing invoice numbers first to avoid duplicates, and returns `{ "provisioned": number, "skipped": number, "failed": number, "remaining": number, "failures": Array }`.
+- **`POST /api/demo/reconcile`**: Owner-triggered reconciliation (`actor: 'owner'`) against live PayPal state for one or all provisioned invoices.
 - **`POST /api/demo/simulate-payment`**: Simulates payment receipt (for instant demo evaluation without waiting for webhooks).
   - *Body*: `{ "invoiceId": string, "amountCents"?: number }`
   - *Response*: `{ "status": "ok", "invoice": Invoice, "cashBalance": number }`
@@ -282,4 +289,5 @@ The `@settle/agent` default provider is `gemini` using the Google Gemini API. A 
 1. **Real LLM Agent Integration**: `@settle/agent` is fully integrated with `AGENT_IMPL=real` as the default. Configured with Google Gemini (`LLM_PROVIDER=gemini`), Anthropic (`anthropic`), OpenAI (`openai`), or `mock`. Fallback to `StubAgent` ensures maximum demo resiliency.
 2. **Server-Sent Events (SSE)**: The API includes an in-memory event bus (`src/events/bus.ts`). Downstream teams can expose a `GET /api/events` SSE stream to trigger automatic browser dashboard refreshes when PayPal webhooks arrive.
 3. **Multi-Tenant Scoping**: The current schema is pre-scoped with foreign keys for `businessId` and `payerId`, but Maya Studio (`biz_001`) is currently the single tenant. Adding session authentication (e.g. Auth0) will allow multi-business operation.
+4. **Audit Resilience & Response Validation**: All audit writers enforce Contract v1 `AuditActor` (`'agent' | 'owner' | 'paypal' | 'system'`) at compile time; an idempotent startup migration (`repairInvalidAuditActors`) rewrites any legacy invalid actors to `'system'` with `detail.originalActor` preserved. Request parsing failures return `400 VALIDATION_ERROR` whereas response schema failures return `500 INTERNAL_ERROR` with structured Pino error logs (`route`, `reqId`, `issues`).
 

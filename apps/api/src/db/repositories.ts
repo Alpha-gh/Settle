@@ -391,6 +391,13 @@ export class InvoicePayPalIdRepository {
   }
 
   async findActive(invoiceId: Id): Promise<string | null> {
+    const entry = await this.findActiveEntry(invoiceId);
+    return entry?.paypalInvoiceId || null;
+  }
+
+  async findActiveEntry(
+    invoiceId: Id,
+  ): Promise<{ paypalInvoiceId: string; paypalInvoiceNumber: string | null } | null> {
     const db = getDb();
     const rows = await db
       .select()
@@ -404,7 +411,11 @@ export class InvoicePayPalIdRepository {
       .orderBy(desc(invoicePayPalIds.createdAt))
       .limit(1);
 
-    return rows[0]?.paypalInvoiceId || null;
+    if (!rows[0]) return null;
+    return {
+      paypalInvoiceId: rows[0].paypalInvoiceId,
+      paypalInvoiceNumber: rows[0].paypalInvoiceNumber ?? null,
+    };
   }
 
   async findByPayPalId(paypalInvoiceId: string) {

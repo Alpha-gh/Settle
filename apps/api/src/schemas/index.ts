@@ -343,6 +343,7 @@ export const DashboardResponseSchema = z.object({
   obligations: z.array(ObligationSchema),
   recentActions: z.array(ActionRecordSchema).optional(),
   auditLog: z.array(AuditEventSchema).optional(),
+  warnings: z.array(z.string()).optional(),
 });
 export type DashboardResponse = z.infer<typeof DashboardResponseSchema>;
 
@@ -386,5 +387,71 @@ export const ErrorResponseSchema = z.object({
     details: z.unknown().optional(),
   }),
 });
+
+export class ResponseValidationError extends Error {
+  public readonly statusCode = 500;
+  public readonly code = 'INTERNAL_ERROR';
+  public readonly issues: z.ZodIssue[];
+  public readonly route: string;
+
+  constructor(issues: z.ZodIssue[], route: string) {
+    super(`Response schema validation failed on ${route}`);
+    this.name = 'ResponseValidationError';
+    this.issues = issues;
+    this.route = route;
+  }
+}
+
+export function validateResponseSchema<T>(
+  schema: z.ZodType<T>,
+  data: unknown,
+  route: string,
+): T {
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) {
+    throw new ResponseValidationError(parsed.error.issues, route);
+  }
+  return parsed.data;
+}
+
+export function filterValidRows<T>(
+  items: unknown[],
+  schema: z.ZodType<T>,
+  collectionName: string,
+  log: { error: (obj: Record<string, unknown>, msg: string) => void },
+  reqId: string,
+  warnings: string[],
+): T[] {
+  const valid: T[] = [];
+  for (const item of items) {
+    const parsed = schema.safeParse(item);
+    if (parsed.success) {
+      valid.push(parsed.data);
+      continue;
+    }
+    const rowId =
+      item && typeof item === 'object' && 'id' in item
+        ? String((item as { id?: unknown }).id ?? '<unknown>')
+        : '<unknown>';
+    const formattedIssues = parsed.error.issues.map((issue) => ({
+      path: issue.path.join('.') || 'root',
+      message: issue.message,
+    }));
+    const issueSummary = formattedIssues
+      .map((i) => `${i.path}: ${i.message}`)
+      .join('; ');
+    log.error(
+      {
+        reqId,
+        collection: collectionName,
+        rowId,
+        issues: formattedIssues,
+      },
+      `Dropped invalid ${collectionName} row ${rowId}: ${issueSummary}`,
+    );
+    warnings.push(`Dropped invalid ${collectionName} row ${rowId}: ${issueSummary}`);
+  }
+  return valid;
+}
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 

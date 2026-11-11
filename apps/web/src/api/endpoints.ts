@@ -15,6 +15,7 @@ export const ENDPOINTS = {
   chat: () => '/api/chat',
   events: () => '/api/events',
   demoReset: () => '/api/demo/reset',
+  demoProvisionPayPal: () => '/api/demo/provision-paypal',
   demoSimulatePayment: () => '/api/demo/simulate-payment',
 } as const;
 

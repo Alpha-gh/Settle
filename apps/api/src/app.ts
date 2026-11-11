@@ -29,7 +29,7 @@ import {
   InvoicePayPalIdRepository,
 } from './db/repositories.js';
 import { getRawSql, getDb } from './db/index.js';
-import { runMigrations } from './db/migrate.js';
+import { runMigrations, repairInvalidAuditActors } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
 import {
@@ -61,24 +61,38 @@ import {
   AgentRunRequestBodySchema,
   SimulatePaymentBodySchema,
   ReconcileBodySchema,
+  InvoiceSchema,
+  PayerSchema,
+  ObligationSchema,
+  ActionRecordSchema,
+  AuditEventSchema,
+  ResponseValidationError,
+  validateResponseSchema,
+  filterValidRows,
 } from './schemas/index.js';
 
 export interface BuildAppOptions {
   paypalClient?: PayPalClient | PayPalPort;
+  loggerStream?: NodeJS.WritableStream;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = getEnv();
+
+  const loggerConfig: Record<string, unknown> = {
+    level: env.NODE_ENV === 'test' ? 'warn' : 'info',
+    redact: ['req.headers.authorization', 'req.headers.cookie'],
+  };
+  if (options.loggerStream) {
+    loggerConfig.stream = options.loggerStream;
+  }
 
   const app = Fastify({
     bodyLimit: 1048576, // 1MB body limit (Item 4)
     connectionTimeout: 120000, // 120s timeout (never shorter than 60s)
     requestTimeout: 120000, // 120s timeout (never shorter than 60s)
     keepAliveTimeout: 65000, // 65s keepalive for upstream proxies
-    logger: {
-      level: env.NODE_ENV === 'test' ? 'warn' : 'info',
-      redact: ['req.headers.authorization', 'req.headers.cookie'],
-    },
+    logger: loggerConfig as any,
   });
 
   // Security Headers (Item 4)
@@ -174,8 +188,34 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     let code = 'INTERNAL_ERROR';
     let message = error?.message || 'An unexpected error occurred';
     let details: unknown = undefined;
+    let alreadyLogged = false;
 
-    if (error instanceof z.ZodError) {
+    if (error instanceof ResponseValidationError) {
+      statusCode = 500;
+      code = 'INTERNAL_ERROR';
+      const formattedIssues = error.issues.map((issue) => ({
+        path: issue.path.join('.') || 'root',
+        message: issue.message,
+      }));
+      request.log.error(
+        {
+          reqId: request.id,
+          route: error.route,
+          method: request.method,
+          url: request.url,
+          issues: formattedIssues,
+        },
+        `Response validation failed on ${error.route}: ${formattedIssues.map((i) => `${i.path}: ${i.message}`).join('; ')}`,
+      );
+      alreadyLogged = true;
+      if (env.NODE_ENV === 'production') {
+        message = 'Internal server error';
+        details = undefined;
+      } else {
+        message = error.message;
+        details = formattedIssues;
+      }
+    } else if (error instanceof z.ZodError) {
       statusCode = 400;
       code = 'VALIDATION_ERROR';
       message = 'Request validation failed';
@@ -227,7 +267,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
 
-    if (statusCode >= 500) {
+    if (statusCode >= 500 && !alreadyLogged) {
       const isStaticReq =
         request.url === '/' ||
         request.url.startsWith('/assets/') ||
@@ -417,7 +457,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 1. Dashboard
   app.get('/api/dashboard', async (request, reply) => {
-    const snapshot = await getCurrentSnapshot();
+    const warnings: string[] = [];
+    const rawSnapshot = await getCurrentSnapshot();
+    const snapshot: Snapshot = {
+      business: rawSnapshot.business,
+      payers: filterValidRows(rawSnapshot.payers, PayerSchema, 'payers', request.log, request.id, warnings),
+      invoices: filterValidRows(rawSnapshot.invoices, InvoiceSchema, 'invoices', request.log, request.id, warnings),
+      obligations: filterValidRows(rawSnapshot.obligations, ObligationSchema, 'obligations', request.log, request.id, warnings),
+      policy: rawSnapshot.policy,
+    };
     const engine = await getEngine();
 
     const receipts = engine.expectedReceipts(snapshot.invoices, snapshot.payers, snapshot.business.asOf);
@@ -429,8 +477,25 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
     const kpis = engine.kpis(snapshot);
 
-    const recentActions = await actionRepo.list();
-    const auditLog = await auditRepo.list(50);
+    const rawRecentActions = await actionRepo.list();
+    const rawAuditLog = await auditRepo.list(50);
+
+    const recentActions = filterValidRows(
+      rawRecentActions,
+      ActionRecordSchema,
+      'recentActions',
+      request.log,
+      request.id,
+      warnings,
+    );
+    const auditLog = filterValidRows(
+      rawAuditLog,
+      AuditEventSchema,
+      'auditLog',
+      request.log,
+      request.id,
+      warnings,
+    );
 
     const dashboardData = {
       business: snapshot.business,
@@ -441,10 +506,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       obligations: snapshot.obligations,
       recentActions: recentActions.slice(0, 10),
       auditLog,
+      warnings,
     };
 
     // Validate response shape against Contract v1 schema
-    const validated = DashboardResponseSchema.parse(dashboardData);
+    const validated = validateResponseSchema(
+      DashboardResponseSchema,
+      dashboardData,
+      'GET /api/dashboard',
+    );
     return validated;
   });
 
@@ -984,8 +1054,25 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   );
 
   // 9. Audit Events
-  app.get('/api/audit', async () => {
-    return auditRepo.list(100);
+  app.get('/api/audit', async (request, reply) => {
+    const warnings: string[] = [];
+    const rawEvents = await auditRepo.list(100);
+    const validEvents = filterValidRows(
+      rawEvents,
+      AuditEventSchema,
+      'auditLog',
+      request.log,
+      request.id,
+      warnings,
+    );
+    if (warnings.length > 0) {
+      reply.header('x-settle-warnings', JSON.stringify(warnings));
+    }
+    const query = request.query as { includeWarnings?: string } | undefined;
+    if (query?.includeWarnings === 'true') {
+      return { events: validEvents, warnings };
+    }
+    return validEvents;
   });
 
   // 10. Policy Get & Put
@@ -1051,14 +1138,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   });
 
+  const pendingNumberByInvoiceId = new Map<string, { invoiceNumber: string; requestId: string }>();
+  const recoveredProvisionByInvoiceId = new Map<
+    string,
+    { paypalInvoiceId: string; payUrl: string; paypalInvoiceNumber?: string }
+  >();
+
   // Helper to provision PayPal invoices for SENT invoices missing paypalInvoiceId
   async function provisionPayPal(): Promise<{
     provisioned: number;
     skipped: number;
     failed: number;
+    remaining: number;
     failures: Array<{ invoiceId: string; error: string }>;
   }> {
-    const allInvoices = await invoiceRepo.list();
+    const startMs = performance.now();
+    const budgetMs = getEnv().PROVISION_BUDGET_SECONDS * 1000;
+
+    const allInvoices = (await invoiceRepo.list()).sort((a, b) => a.id.localeCompare(b.id));
     const allPayers = await payerRepo.list();
     const payerMap = new Map(allPayers.map((p) => [p.id, p]));
 
@@ -1071,92 +1168,178 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     let failed = 0;
     const failures: Array<{ invoiceId: string; error: string }> = [];
 
+    const pending: typeof allInvoices = [];
     for (const inv of allInvoices) {
       if (inv.status !== 'SENT' || inv.paypalInvoiceId) {
         skipped++;
-        continue;
-      }
-
-      const payer = payerMap.get(inv.payerId);
-      if (!payer) {
-        failed++;
-        failures.push({ invoiceId: inv.id, error: `Payer ${inv.payerId} not found` });
-        continue;
-      }
-
-      const effectivePayer: Payer =
-        demoBuyerInvoiceIds.includes(inv.id) && env.PAYPAL_BUYER_EMAIL
-          ? { ...payer, email: env.PAYPAL_BUYER_EMAIL }
-          : payer;
-
-      try {
-        const res = await paypalClient.createAndSendInvoice(inv, effectivePayer);
-        const updatedInv = await invoiceRepo.update(inv.id, {
-          paypalInvoiceId: res.paypalInvoiceId,
-          payUrl: res.payUrl,
-        });
-
-        const paypalInvoiceNumber = (res as any).paypalInvoiceNumber;
-        await historyRepo.record(inv.id, res.paypalInvoiceId, 'initial_provisioning', paypalInvoiceNumber);
-
-        const auditTrail = typeof (paypalClient as any).getAuditTrail === 'function'
-          ? (paypalClient as any).getAuditTrail()
-          : [];
-        const lastAudit = auditTrail[auditTrail.length - 1];
-
-        const provAudit: AuditEvent = {
-          id: randomUUID(),
-          ts: new Date().toISOString(),
-          actor: 'paypal',
-          kind: 'invoice.provisioned',
-          summary: `Invoice ${inv.number} provisioned in PayPal as ${res.paypalInvoiceId}${paypalInvoiceNumber ? ` (${paypalInvoiceNumber})` : ''}`,
-          invoiceId: inv.id,
-          paypalRequestId: lastAudit?.paypalRequestId,
-          detail: {
-            paypalInvoiceId: res.paypalInvoiceId,
-            paypalInvoiceNumber,
-            payUrl: res.payUrl,
-            recipientEmail: effectivePayer.email,
-          },
-        };
-        await auditRepo.append(provAudit);
-        eventBus.emitEvent({ type: 'audit.appended', payload: provAudit });
-
-        if (updatedInv) {
-          eventBus.emitEvent({ type: 'invoice.updated', payload: updatedInv });
-        }
-
-        provisioned++;
-        // Short delay between sequential provisioning requests
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (err: any) {
-        failed++;
-        const failureItem: any = {
-          invoiceId: inv.id,
-          invoiceNumber: inv.number,
-          error: err?.message || String(err),
-        };
-        if (err?.name === 'PayPalError' || err?.paypalName || err?.debug_id || err?.debugId) {
-          failureItem.name = err.paypalName || err.name;
-          failureItem.debug_id = err.debug_id || err.debugId;
-          failureItem.issues = err.issues;
-          failureItem.details = err.details;
-        }
-        app.log.error({
-          msg: `Failed to provision PayPal invoice for ${inv.number}`,
-          invoiceId: inv.id,
-          invoiceNumber: inv.number,
-          error: failureItem.error,
-          paypalName: failureItem.name,
-          debug_id: failureItem.debug_id,
-          issues: failureItem.issues,
-          details: failureItem.details,
-        });
-        failures.push(failureItem);
+      } else {
+        pending.push(inv);
       }
     }
 
-    return { provisioned, skipped, failed, failures };
+    let nextIndex = 0;
+    const claimNext = () => {
+      if (nextIndex >= pending.length) return null;
+      if (performance.now() - startMs >= budgetMs) return null;
+      const idx = nextIndex;
+      nextIndex++;
+      return pending[idx];
+    };
+
+    const concurrency = 3;
+    const worker = async () => {
+      while (true) {
+        const inv = claimNext();
+        if (!inv) break;
+
+        const payer = payerMap.get(inv.payerId);
+        if (!payer) {
+          failed++;
+          failures.push({ invoiceId: inv.id, error: `Payer ${inv.payerId} not found` });
+          continue;
+        }
+
+        const effectivePayer: Payer =
+          demoBuyerInvoiceIds.includes(inv.id) && env.PAYPAL_BUYER_EMAIL
+            ? { ...payer, email: env.PAYPAL_BUYER_EMAIL }
+            : payer;
+
+        try {
+          let res = recoveredProvisionByInvoiceId.get(inv.id);
+
+          if (!res) {
+            const activeEntry = await historyRepo.findActiveEntry(inv.id);
+            if (activeEntry) {
+              const payUrl =
+                typeof (paypalClient as any).generatePayLink === 'function'
+                  ? (paypalClient as any).generatePayLink(activeEntry.paypalInvoiceId)
+                  : `https://www.sandbox.paypal.com/invoice/p/#${activeEntry.paypalInvoiceId}`;
+              res = {
+                paypalInvoiceId: activeEntry.paypalInvoiceId,
+                payUrl,
+                paypalInvoiceNumber: activeEntry.paypalInvoiceNumber ?? undefined,
+              };
+            }
+          }
+
+          if (!res) {
+            let entry = pendingNumberByInvoiceId.get(inv.id);
+            if (!entry) {
+              const generatedNumber =
+                typeof (paypalClient as any).generateUniqueInvoiceNumber === 'function'
+                  ? await (paypalClient as any).generateUniqueInvoiceNumber(inv.number)
+                  : inv.number;
+              entry = { invoiceNumber: generatedNumber, requestId: randomUUID() };
+              pendingNumberByInvoiceId.set(inv.id, entry);
+            }
+
+            if (typeof (paypalClient as any).findInvoiceByNumber === 'function') {
+              const existingRemote = await (paypalClient as any).findInvoiceByNumber(entry.invoiceNumber);
+              if (existingRemote?.paypalInvoiceId) {
+                res = {
+                  paypalInvoiceId: existingRemote.paypalInvoiceId,
+                  payUrl: existingRemote.payUrl,
+                  paypalInvoiceNumber: existingRemote.paypalInvoiceNumber,
+                };
+              }
+            }
+
+            if (!res) {
+              res = await (paypalClient as any).createAndSendInvoice(inv, effectivePayer, {
+                invoiceNumber: entry.invoiceNumber,
+                requestId: entry.requestId,
+              });
+            }
+
+            // Hold in memory immediately so if DB saving fails, the next call does not create a duplicate
+            recoveredProvisionByInvoiceId.set(inv.id, res!);
+          }
+
+          const resolvedRes = res!;
+          const paypalInvoiceNumber = (resolvedRes as any).paypalInvoiceNumber;
+
+          // Ensure history row exists without creating duplicates
+          const alreadyRecorded = await historyRepo.findByPayPalId(resolvedRes.paypalInvoiceId);
+          if (!alreadyRecorded) {
+            await historyRepo.record(
+              inv.id,
+              resolvedRes.paypalInvoiceId,
+              'initial_provisioning',
+              paypalInvoiceNumber,
+            );
+          }
+
+          const updatedInv = await invoiceRepo.update(inv.id, {
+            paypalInvoiceId: resolvedRes.paypalInvoiceId,
+            payUrl: resolvedRes.payUrl,
+          });
+          if (!updatedInv) {
+            throw new Error(`Failed to persist paypalInvoiceId for invoice ${inv.id}`);
+          }
+
+          const auditTrail = typeof (paypalClient as any).getAuditTrail === 'function'
+            ? (paypalClient as any).getAuditTrail()
+            : [];
+          const lastAudit = auditTrail[auditTrail.length - 1];
+
+          const provAudit: AuditEvent = {
+            id: randomUUID(),
+            ts: new Date().toISOString(),
+            actor: 'paypal',
+            kind: 'invoice.provisioned',
+            summary: `Invoice ${inv.number} provisioned in PayPal as ${resolvedRes.paypalInvoiceId}${paypalInvoiceNumber ? ` (${paypalInvoiceNumber})` : ''}`,
+            invoiceId: inv.id,
+            paypalRequestId: pendingNumberByInvoiceId.get(inv.id)?.requestId || lastAudit?.paypalRequestId,
+            detail: {
+              paypalInvoiceId: resolvedRes.paypalInvoiceId,
+              paypalInvoiceNumber,
+              payUrl: resolvedRes.payUrl,
+              recipientEmail: effectivePayer.email,
+            },
+          };
+          await auditRepo.append(provAudit);
+          eventBus.emitEvent({ type: 'audit.appended', payload: provAudit });
+          eventBus.emitEvent({ type: 'invoice.updated', payload: updatedInv });
+
+          recoveredProvisionByInvoiceId.delete(inv.id);
+          pendingNumberByInvoiceId.delete(inv.id);
+          provisioned++;
+        } catch (err: any) {
+          failed++;
+          const failureItem: any = {
+            invoiceId: inv.id,
+            invoiceNumber: inv.number,
+            error: err?.message || String(err),
+          };
+          if (err?.name === 'PayPalError' || err?.paypalName || err?.debug_id || err?.debugId) {
+            failureItem.name = err.paypalName || err.name;
+            failureItem.debug_id = err.debug_id || err.debugId;
+            failureItem.issues = err.issues;
+            failureItem.details = err.details;
+          }
+          app.log.error({
+            msg: `Failed to provision PayPal invoice for ${inv.number}`,
+            invoiceId: inv.id,
+            invoiceNumber: inv.number,
+            error: failureItem.error,
+            paypalName: failureItem.name,
+            debug_id: failureItem.debug_id,
+            issues: failureItem.issues,
+            details: failureItem.details,
+          });
+          failures.push(failureItem);
+        }
+      }
+    };
+
+    if (pending.length > 0) {
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, pending.length) }, () => worker()),
+      );
+    }
+
+    const remaining = Math.max(0, pending.length - nextIndex);
+    return { provisioned, skipped, failed, remaining, failures };
   }
 
   // 13. Demo Provision PayPal
@@ -1291,7 +1474,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const result = await reconcileService.reconcileInvoicePayment({
         invoiceId: invoice.id,
         paypalInvoiceId: invoice.paypalInvoiceId,
-        actor: 'manual',
+        actor: 'owner',
         eventType: 'demo.reconcile',
       });
 
@@ -1322,7 +1505,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const res = await reconcileService.reconcileInvoicePayment({
         invoiceId: inv.id,
         paypalInvoiceId: inv.paypalInvoiceId!,
-        actor: 'manual',
+        actor: 'owner',
         eventType: 'demo.reconcile',
       });
       reconciled.push({
@@ -1347,6 +1530,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 15. Demo Reset
   app.post('/api/demo/reset', async (request, reply) => {
+    pendingNumberByInvoiceId.clear();
+    recoveredProvisionByInvoiceId.clear();
+    await repairInvalidAuditActors();
     await resetDemoData();
     let provisioningResult;
     if (env.AUTO_PROVISION_PAYPAL) {
