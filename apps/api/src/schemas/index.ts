@@ -343,6 +343,7 @@ export const DashboardResponseSchema = z.object({
   obligations: z.array(ObligationSchema),
   recentActions: z.array(ActionRecordSchema).optional(),
   auditLog: z.array(AuditEventSchema).optional(),
+  warnings: z.array(z.string()).optional(),
 });
 export type DashboardResponse = z.infer<typeof DashboardResponseSchema>;
 
@@ -411,6 +412,46 @@ export function validateResponseSchema<T>(
     throw new ResponseValidationError(parsed.error.issues, route);
   }
   return parsed.data;
+}
+
+export function filterValidRows<T>(
+  items: unknown[],
+  schema: z.ZodType<T>,
+  collectionName: string,
+  log: { error: (obj: Record<string, unknown>, msg: string) => void },
+  reqId: string,
+  warnings: string[],
+): T[] {
+  const valid: T[] = [];
+  for (const item of items) {
+    const parsed = schema.safeParse(item);
+    if (parsed.success) {
+      valid.push(parsed.data);
+      continue;
+    }
+    const rowId =
+      item && typeof item === 'object' && 'id' in item
+        ? String((item as { id?: unknown }).id ?? '<unknown>')
+        : '<unknown>';
+    const formattedIssues = parsed.error.issues.map((issue) => ({
+      path: issue.path.join('.') || 'root',
+      message: issue.message,
+    }));
+    const issueSummary = formattedIssues
+      .map((i) => `${i.path}: ${i.message}`)
+      .join('; ');
+    log.error(
+      {
+        reqId,
+        collection: collectionName,
+        rowId,
+        issues: formattedIssues,
+      },
+      `Dropped invalid ${collectionName} row ${rowId}: ${issueSummary}`,
+    );
+    warnings.push(`Dropped invalid ${collectionName} row ${rowId}: ${issueSummary}`);
+  }
+  return valid;
 }
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 

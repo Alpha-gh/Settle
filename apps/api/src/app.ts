@@ -61,8 +61,14 @@ import {
   AgentRunRequestBodySchema,
   SimulatePaymentBodySchema,
   ReconcileBodySchema,
+  InvoiceSchema,
+  PayerSchema,
+  ObligationSchema,
+  ActionRecordSchema,
+  AuditEventSchema,
   ResponseValidationError,
   validateResponseSchema,
+  filterValidRows,
 } from './schemas/index.js';
 
 export interface BuildAppOptions {
@@ -451,7 +457,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 1. Dashboard
   app.get('/api/dashboard', async (request, reply) => {
-    const snapshot = await getCurrentSnapshot();
+    const warnings: string[] = [];
+    const rawSnapshot = await getCurrentSnapshot();
+    const snapshot: Snapshot = {
+      business: rawSnapshot.business,
+      payers: filterValidRows(rawSnapshot.payers, PayerSchema, 'payers', request.log, request.id, warnings),
+      invoices: filterValidRows(rawSnapshot.invoices, InvoiceSchema, 'invoices', request.log, request.id, warnings),
+      obligations: filterValidRows(rawSnapshot.obligations, ObligationSchema, 'obligations', request.log, request.id, warnings),
+      policy: rawSnapshot.policy,
+    };
     const engine = await getEngine();
 
     const receipts = engine.expectedReceipts(snapshot.invoices, snapshot.payers, snapshot.business.asOf);
@@ -463,8 +477,25 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     });
     const kpis = engine.kpis(snapshot);
 
-    const recentActions = await actionRepo.list();
-    const auditLog = await auditRepo.list(50);
+    const rawRecentActions = await actionRepo.list();
+    const rawAuditLog = await auditRepo.list(50);
+
+    const recentActions = filterValidRows(
+      rawRecentActions,
+      ActionRecordSchema,
+      'recentActions',
+      request.log,
+      request.id,
+      warnings,
+    );
+    const auditLog = filterValidRows(
+      rawAuditLog,
+      AuditEventSchema,
+      'auditLog',
+      request.log,
+      request.id,
+      warnings,
+    );
 
     const dashboardData = {
       business: snapshot.business,
@@ -475,6 +506,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       obligations: snapshot.obligations,
       recentActions: recentActions.slice(0, 10),
       auditLog,
+      warnings,
     };
 
     // Validate response shape against Contract v1 schema
@@ -1022,8 +1054,25 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   );
 
   // 9. Audit Events
-  app.get('/api/audit', async () => {
-    return auditRepo.list(100);
+  app.get('/api/audit', async (request, reply) => {
+    const warnings: string[] = [];
+    const rawEvents = await auditRepo.list(100);
+    const validEvents = filterValidRows(
+      rawEvents,
+      AuditEventSchema,
+      'auditLog',
+      request.log,
+      request.id,
+      warnings,
+    );
+    if (warnings.length > 0) {
+      reply.header('x-settle-warnings', JSON.stringify(warnings));
+    }
+    const query = request.query as { includeWarnings?: string } | undefined;
+    if (query?.includeWarnings === 'true') {
+      return { events: validEvents, warnings };
+    }
+    return validEvents;
   });
 
   // 10. Policy Get & Put

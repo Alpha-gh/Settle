@@ -341,6 +341,7 @@ export const dashboardResponseSchema = z.object({
   recentActions: z.array(actionRecordSchema).optional(),
   auditLog: z.array(auditEventSchema).optional(),
   policy: policySchema.optional(),
+  warnings: z.array(z.string()).optional(),
 });
 
 export type DashboardResponse = z.infer<typeof dashboardResponseSchema>;

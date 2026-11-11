@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { useSnapshot, useForecast, useActions } from '../api/queries';
+import { useDashboard, useSnapshot, useForecast, useActions } from '../api/queries';
 import { formatDate } from '../lib/format';
 import { useSelectedAction } from '../state/selection';
 import { useBreachMemory } from '../state/breachMemory';
@@ -13,6 +13,7 @@ import { ImpactCard } from '../components/ImpactCard';
 import { AuditTimeline } from '../components/AuditTimeline';
 
 export const DashboardPage: React.FC = () => {
+  const { data: dashboard } = useDashboard();
   const { data: snapshot, isLoading: loadingSnapshot } = useSnapshot();
   const { data: forecast, isLoading: loadingForecast } = useForecast();
   const { data: actions = [] } = useActions();
@@ -53,6 +54,16 @@ export const DashboardPage: React.FC = () => {
         <div className="space-y-4">
           <BreachBanner forecast={forecast} snapshot={snapshot} />
           <GapClosedBanner forecast={forecast} hadBreach={hadBreach} />
+        </div>
+      )}
+
+      {(dashboard?.warnings?.length ?? 0) > 0 && (
+        <div
+          data-testid="records-warnings-note"
+          role="status"
+          className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900"
+        >
+          Some records could not be displayed
         </div>
       )}
 
