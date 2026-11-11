@@ -1138,14 +1138,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   });
 
+  const pendingNumberByInvoiceId = new Map<string, { invoiceNumber: string; requestId: string }>();
+  const recoveredProvisionByInvoiceId = new Map<
+    string,
+    { paypalInvoiceId: string; payUrl: string; paypalInvoiceNumber?: string }
+  >();
+
   // Helper to provision PayPal invoices for SENT invoices missing paypalInvoiceId
   async function provisionPayPal(): Promise<{
     provisioned: number;
     skipped: number;
     failed: number;
+    remaining: number;
     failures: Array<{ invoiceId: string; error: string }>;
   }> {
-    const allInvoices = await invoiceRepo.list();
+    const startMs = performance.now();
+    const budgetMs = getEnv().PROVISION_BUDGET_SECONDS * 1000;
+
+    const allInvoices = (await invoiceRepo.list()).sort((a, b) => a.id.localeCompare(b.id));
     const allPayers = await payerRepo.list();
     const payerMap = new Map(allPayers.map((p) => [p.id, p]));
 
@@ -1158,92 +1168,178 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     let failed = 0;
     const failures: Array<{ invoiceId: string; error: string }> = [];
 
+    const pending: typeof allInvoices = [];
     for (const inv of allInvoices) {
       if (inv.status !== 'SENT' || inv.paypalInvoiceId) {
         skipped++;
-        continue;
-      }
-
-      const payer = payerMap.get(inv.payerId);
-      if (!payer) {
-        failed++;
-        failures.push({ invoiceId: inv.id, error: `Payer ${inv.payerId} not found` });
-        continue;
-      }
-
-      const effectivePayer: Payer =
-        demoBuyerInvoiceIds.includes(inv.id) && env.PAYPAL_BUYER_EMAIL
-          ? { ...payer, email: env.PAYPAL_BUYER_EMAIL }
-          : payer;
-
-      try {
-        const res = await paypalClient.createAndSendInvoice(inv, effectivePayer);
-        const updatedInv = await invoiceRepo.update(inv.id, {
-          paypalInvoiceId: res.paypalInvoiceId,
-          payUrl: res.payUrl,
-        });
-
-        const paypalInvoiceNumber = (res as any).paypalInvoiceNumber;
-        await historyRepo.record(inv.id, res.paypalInvoiceId, 'initial_provisioning', paypalInvoiceNumber);
-
-        const auditTrail = typeof (paypalClient as any).getAuditTrail === 'function'
-          ? (paypalClient as any).getAuditTrail()
-          : [];
-        const lastAudit = auditTrail[auditTrail.length - 1];
-
-        const provAudit: AuditEvent = {
-          id: randomUUID(),
-          ts: new Date().toISOString(),
-          actor: 'paypal',
-          kind: 'invoice.provisioned',
-          summary: `Invoice ${inv.number} provisioned in PayPal as ${res.paypalInvoiceId}${paypalInvoiceNumber ? ` (${paypalInvoiceNumber})` : ''}`,
-          invoiceId: inv.id,
-          paypalRequestId: lastAudit?.paypalRequestId,
-          detail: {
-            paypalInvoiceId: res.paypalInvoiceId,
-            paypalInvoiceNumber,
-            payUrl: res.payUrl,
-            recipientEmail: effectivePayer.email,
-          },
-        };
-        await auditRepo.append(provAudit);
-        eventBus.emitEvent({ type: 'audit.appended', payload: provAudit });
-
-        if (updatedInv) {
-          eventBus.emitEvent({ type: 'invoice.updated', payload: updatedInv });
-        }
-
-        provisioned++;
-        // Short delay between sequential provisioning requests
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (err: any) {
-        failed++;
-        const failureItem: any = {
-          invoiceId: inv.id,
-          invoiceNumber: inv.number,
-          error: err?.message || String(err),
-        };
-        if (err?.name === 'PayPalError' || err?.paypalName || err?.debug_id || err?.debugId) {
-          failureItem.name = err.paypalName || err.name;
-          failureItem.debug_id = err.debug_id || err.debugId;
-          failureItem.issues = err.issues;
-          failureItem.details = err.details;
-        }
-        app.log.error({
-          msg: `Failed to provision PayPal invoice for ${inv.number}`,
-          invoiceId: inv.id,
-          invoiceNumber: inv.number,
-          error: failureItem.error,
-          paypalName: failureItem.name,
-          debug_id: failureItem.debug_id,
-          issues: failureItem.issues,
-          details: failureItem.details,
-        });
-        failures.push(failureItem);
+      } else {
+        pending.push(inv);
       }
     }
 
-    return { provisioned, skipped, failed, failures };
+    let nextIndex = 0;
+    const claimNext = () => {
+      if (nextIndex >= pending.length) return null;
+      if (performance.now() - startMs >= budgetMs) return null;
+      const idx = nextIndex;
+      nextIndex++;
+      return pending[idx];
+    };
+
+    const concurrency = 3;
+    const worker = async () => {
+      while (true) {
+        const inv = claimNext();
+        if (!inv) break;
+
+        const payer = payerMap.get(inv.payerId);
+        if (!payer) {
+          failed++;
+          failures.push({ invoiceId: inv.id, error: `Payer ${inv.payerId} not found` });
+          continue;
+        }
+
+        const effectivePayer: Payer =
+          demoBuyerInvoiceIds.includes(inv.id) && env.PAYPAL_BUYER_EMAIL
+            ? { ...payer, email: env.PAYPAL_BUYER_EMAIL }
+            : payer;
+
+        try {
+          let res = recoveredProvisionByInvoiceId.get(inv.id);
+
+          if (!res) {
+            const activeEntry = await historyRepo.findActiveEntry(inv.id);
+            if (activeEntry) {
+              const payUrl =
+                typeof (paypalClient as any).generatePayLink === 'function'
+                  ? (paypalClient as any).generatePayLink(activeEntry.paypalInvoiceId)
+                  : `https://www.sandbox.paypal.com/invoice/p/#${activeEntry.paypalInvoiceId}`;
+              res = {
+                paypalInvoiceId: activeEntry.paypalInvoiceId,
+                payUrl,
+                paypalInvoiceNumber: activeEntry.paypalInvoiceNumber ?? undefined,
+              };
+            }
+          }
+
+          if (!res) {
+            let entry = pendingNumberByInvoiceId.get(inv.id);
+            if (!entry) {
+              const generatedNumber =
+                typeof (paypalClient as any).generateUniqueInvoiceNumber === 'function'
+                  ? await (paypalClient as any).generateUniqueInvoiceNumber(inv.number)
+                  : inv.number;
+              entry = { invoiceNumber: generatedNumber, requestId: randomUUID() };
+              pendingNumberByInvoiceId.set(inv.id, entry);
+            }
+
+            if (typeof (paypalClient as any).findInvoiceByNumber === 'function') {
+              const existingRemote = await (paypalClient as any).findInvoiceByNumber(entry.invoiceNumber);
+              if (existingRemote?.paypalInvoiceId) {
+                res = {
+                  paypalInvoiceId: existingRemote.paypalInvoiceId,
+                  payUrl: existingRemote.payUrl,
+                  paypalInvoiceNumber: existingRemote.paypalInvoiceNumber,
+                };
+              }
+            }
+
+            if (!res) {
+              res = await (paypalClient as any).createAndSendInvoice(inv, effectivePayer, {
+                invoiceNumber: entry.invoiceNumber,
+                requestId: entry.requestId,
+              });
+            }
+
+            // Hold in memory immediately so if DB saving fails, the next call does not create a duplicate
+            recoveredProvisionByInvoiceId.set(inv.id, res!);
+          }
+
+          const resolvedRes = res!;
+          const paypalInvoiceNumber = (resolvedRes as any).paypalInvoiceNumber;
+
+          // Ensure history row exists without creating duplicates
+          const alreadyRecorded = await historyRepo.findByPayPalId(resolvedRes.paypalInvoiceId);
+          if (!alreadyRecorded) {
+            await historyRepo.record(
+              inv.id,
+              resolvedRes.paypalInvoiceId,
+              'initial_provisioning',
+              paypalInvoiceNumber,
+            );
+          }
+
+          const updatedInv = await invoiceRepo.update(inv.id, {
+            paypalInvoiceId: resolvedRes.paypalInvoiceId,
+            payUrl: resolvedRes.payUrl,
+          });
+          if (!updatedInv) {
+            throw new Error(`Failed to persist paypalInvoiceId for invoice ${inv.id}`);
+          }
+
+          const auditTrail = typeof (paypalClient as any).getAuditTrail === 'function'
+            ? (paypalClient as any).getAuditTrail()
+            : [];
+          const lastAudit = auditTrail[auditTrail.length - 1];
+
+          const provAudit: AuditEvent = {
+            id: randomUUID(),
+            ts: new Date().toISOString(),
+            actor: 'paypal',
+            kind: 'invoice.provisioned',
+            summary: `Invoice ${inv.number} provisioned in PayPal as ${resolvedRes.paypalInvoiceId}${paypalInvoiceNumber ? ` (${paypalInvoiceNumber})` : ''}`,
+            invoiceId: inv.id,
+            paypalRequestId: pendingNumberByInvoiceId.get(inv.id)?.requestId || lastAudit?.paypalRequestId,
+            detail: {
+              paypalInvoiceId: resolvedRes.paypalInvoiceId,
+              paypalInvoiceNumber,
+              payUrl: resolvedRes.payUrl,
+              recipientEmail: effectivePayer.email,
+            },
+          };
+          await auditRepo.append(provAudit);
+          eventBus.emitEvent({ type: 'audit.appended', payload: provAudit });
+          eventBus.emitEvent({ type: 'invoice.updated', payload: updatedInv });
+
+          recoveredProvisionByInvoiceId.delete(inv.id);
+          pendingNumberByInvoiceId.delete(inv.id);
+          provisioned++;
+        } catch (err: any) {
+          failed++;
+          const failureItem: any = {
+            invoiceId: inv.id,
+            invoiceNumber: inv.number,
+            error: err?.message || String(err),
+          };
+          if (err?.name === 'PayPalError' || err?.paypalName || err?.debug_id || err?.debugId) {
+            failureItem.name = err.paypalName || err.name;
+            failureItem.debug_id = err.debug_id || err.debugId;
+            failureItem.issues = err.issues;
+            failureItem.details = err.details;
+          }
+          app.log.error({
+            msg: `Failed to provision PayPal invoice for ${inv.number}`,
+            invoiceId: inv.id,
+            invoiceNumber: inv.number,
+            error: failureItem.error,
+            paypalName: failureItem.name,
+            debug_id: failureItem.debug_id,
+            issues: failureItem.issues,
+            details: failureItem.details,
+          });
+          failures.push(failureItem);
+        }
+      }
+    };
+
+    if (pending.length > 0) {
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, pending.length) }, () => worker()),
+      );
+    }
+
+    const remaining = Math.max(0, pending.length - nextIndex);
+    return { provisioned, skipped, failed, remaining, failures };
   }
 
   // 13. Demo Provision PayPal
@@ -1434,6 +1530,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 15. Demo Reset
   app.post('/api/demo/reset', async (request, reply) => {
+    pendingNumberByInvoiceId.clear();
+    recoveredProvisionByInvoiceId.clear();
     await repairInvalidAuditActors();
     await resetDemoData();
     let provisioningResult;

@@ -211,11 +211,45 @@ export class PayPalClient implements PayPalPort {
   }
 
   /**
+   * Look up an existing non-cancelled PayPal invoice by its invoice number.
+   */
+  public async findInvoiceByNumber(
+    invoiceNumber: string,
+  ): Promise<{ paypalInvoiceId: string; payUrl: string; paypalInvoiceNumber: string; status: string } | null> {
+    try {
+      const { data } = await this.request<{ items?: Array<any> }>({
+        method: 'POST',
+        path: '/v2/invoicing/search-invoices?page_size=5',
+        body: { invoice_number: invoiceNumber },
+        operation: 'findInvoiceByNumber',
+      });
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const match = items.find((item) => {
+        const status = String(item?.status || '').toUpperCase();
+        const num = item?.detail?.invoice_number;
+        return num === invoiceNumber && status !== 'CANCELLED' && status !== 'MARKED_AS_CANCELLED';
+      });
+      if (!match?.id) return null;
+      const payUrl =
+        match?.detail?.metadata?.recipient_view_url || this.generatePayLink(match.id);
+      return {
+        paypalInvoiceId: match.id,
+        payUrl,
+        paypalInvoiceNumber: invoiceNumber,
+        status: String(match.status || 'SENT'),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Create draft invoice, send it to payer, and return paypalInvoiceId and payment link.
    */
   public async createAndSendInvoice(
     inv: Invoice,
     payer: Payer,
+    options?: { invoiceNumber?: string; requestId?: string },
   ): Promise<{ paypalInvoiceId: string; payUrl: string; paypalInvoiceNumber?: string }> {
     const baseNumber = inv.number || (await this.generateNextInvoiceNumber());
     const today = new Date().toISOString().slice(0, 10);
@@ -229,7 +263,16 @@ export class PayPalClient implements PayPalPort {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const invoiceNumber = await this.generateUniqueInvoiceNumber(baseNumber);
+      const invoiceNumber =
+        attempt === 0 && options?.invoiceNumber
+          ? options.invoiceNumber
+          : await this.generateUniqueInvoiceNumber(baseNumber);
+      const createRequestId = options?.requestId
+        ? `${options.requestId.slice(0, 32)}-d${attempt}`
+        : undefined;
+      const sendRequestId = options?.requestId
+        ? `${options.requestId.slice(0, 32)}-s${attempt}`
+        : undefined;
 
       const draftPayload: any = {
         detail: {
@@ -296,6 +339,7 @@ export class PayPalClient implements PayPalPort {
           method: 'POST',
           path: '/v2/invoicing/invoices',
           body: draftPayload,
+          requestId: createRequestId,
           operation: 'createDraftInvoice',
         });
 
@@ -307,11 +351,24 @@ export class PayPalClient implements PayPalPort {
           });
         }
 
+        // Record in history right after draft creation so no duplicate is created on partial failure
+        if (this.historyRepo && inv.id) {
+          try {
+            const existing = await this.historyRepo.findByPayPalId(paypalInvoiceId);
+            if (!existing) {
+              await this.historyRepo.record(inv.id, paypalInvoiceId, 'initial_creation', invoiceNumber);
+            }
+          } catch {
+            // history recording best-effort
+          }
+        }
+
         // 2. Send invoice
         const { data: sendData } = await this.request<any>({
           method: 'POST',
           path: `/v2/invoicing/invoices/${paypalInvoiceId}/send`,
           body: { send_to_recipient: true },
+          requestId: sendRequestId,
           operation: 'sendInvoice',
         });
 
@@ -319,14 +376,6 @@ export class PayPalClient implements PayPalPort {
           sendData?.href ||
           draftData?.detail?.metadata?.recipient_view_url ||
           this.generatePayLink(paypalInvoiceId);
-
-        if (this.historyRepo && inv.id) {
-          try {
-            await this.historyRepo.record(inv.id, paypalInvoiceId, 'initial_creation', invoiceNumber);
-          } catch {
-            // history recording best-effort
-          }
-        }
 
         return { paypalInvoiceId, payUrl, paypalInvoiceNumber: invoiceNumber };
       } catch (err: any) {
@@ -338,6 +387,11 @@ export class PayPalClient implements PayPalPort {
             err.message?.includes('DUPLICATE_INVOICE_NUMBER'));
 
         if (isDuplicateNumber && attempt < maxRetries) {
+          continue;
+        }
+        const isRateLimit = err instanceof PayPalError && err.status === 429;
+        if (isRateLimit && attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
           continue;
         }
         throw err;
