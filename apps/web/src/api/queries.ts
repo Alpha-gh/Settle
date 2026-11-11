@@ -215,18 +215,50 @@ export function useChat() {
   });
 }
 
+export const provisionPayPalResponseSchema = z
+  .object({
+    provisioned: z.number().int(),
+    skipped: z.number().int(),
+    failed: z.number().int(),
+    remaining: z.number().int(),
+    failures: z.array(z.unknown()),
+  })
+  .passthrough();
+
+export type ProvisionPayPalResult = z.infer<typeof provisionPayPalResponseSchema>;
+
+export const demoResetResponseSchema = z
+  .object({
+    status: z.string(),
+    provisioning: provisionPayPalResponseSchema.optional(),
+  })
+  .passthrough();
+
+export type DemoResetResult = z.infer<typeof demoResetResponseSchema>;
+
 export function useDemoReset() {
   const queryClient = useQueryClient();
-  return useMutation<{ status: string }, Error>({
+  return useMutation<DemoResetResult, Error>({
     mutationFn: () =>
       apiRequest(
         ENDPOINTS.demoReset(),
-        z.object({ status: z.string() }),
+        demoResetResponseSchema,
         { method: 'POST', body: '{}' },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries();
     },
+  });
+}
+
+export function useDemoProvisionPayPal() {
+  return useMutation<ProvisionPayPalResult, Error>({
+    mutationFn: () =>
+      apiRequest(
+        ENDPOINTS.demoProvisionPayPal(),
+        provisionPayPalResponseSchema,
+        { method: 'POST', body: '{}' },
+      ),
   });
 }
 
