@@ -119,4 +119,27 @@ export async function runMigrations(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_audit_events_ts ON audit_events(ts DESC);
     CREATE INDEX IF NOT EXISTS idx_actions_invoice ON action_records(invoice_id);
   `);
+
+  await repairInvalidAuditActors();
+}
+
+export async function repairInvalidAuditActors(): Promise<number> {
+  const sql = getRawSql();
+  const rows = await sql.unsafe(`
+    UPDATE audit_events
+    SET
+      detail = jsonb_set(
+        CASE
+          WHEN detail IS NULL OR jsonb_typeof(detail) <> 'object' THEN '{}'::jsonb
+          ELSE detail
+        END,
+        '{originalActor}',
+        to_jsonb(COALESCE(actor, '')),
+        true
+      ),
+      actor = 'system'
+    WHERE actor IS NULL OR actor NOT IN ('agent', 'owner', 'paypal', 'system')
+    RETURNING id
+  `);
+  return rows.length;
 }

@@ -29,7 +29,7 @@ import {
   InvoicePayPalIdRepository,
 } from './db/repositories.js';
 import { getRawSql, getDb } from './db/index.js';
-import { runMigrations } from './db/migrate.js';
+import { runMigrations, repairInvalidAuditActors } from './db/migrate.js';
 import { resetDemoData } from './db/seed.js';
 import { getEngine } from './adapters/engine.js';
 import {
@@ -1347,6 +1347,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // 15. Demo Reset
   app.post('/api/demo/reset', async (request, reply) => {
+    await repairInvalidAuditActors();
     await resetDemoData();
     let provisioningResult;
     if (env.AUTO_PROVISION_PAYPAL) {
