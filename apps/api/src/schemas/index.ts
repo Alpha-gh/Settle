@@ -386,5 +386,31 @@ export const ErrorResponseSchema = z.object({
     details: z.unknown().optional(),
   }),
 });
+
+export class ResponseValidationError extends Error {
+  public readonly statusCode = 500;
+  public readonly code = 'INTERNAL_ERROR';
+  public readonly issues: z.ZodIssue[];
+  public readonly route: string;
+
+  constructor(issues: z.ZodIssue[], route: string) {
+    super(`Response schema validation failed on ${route}`);
+    this.name = 'ResponseValidationError';
+    this.issues = issues;
+    this.route = route;
+  }
+}
+
+export function validateResponseSchema<T>(
+  schema: z.ZodType<T>,
+  data: unknown,
+  route: string,
+): T {
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) {
+    throw new ResponseValidationError(parsed.error.issues, route);
+  }
+  return parsed.data;
+}
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 

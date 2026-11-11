@@ -61,24 +61,32 @@ import {
   AgentRunRequestBodySchema,
   SimulatePaymentBodySchema,
   ReconcileBodySchema,
+  ResponseValidationError,
+  validateResponseSchema,
 } from './schemas/index.js';
 
 export interface BuildAppOptions {
   paypalClient?: PayPalClient | PayPalPort;
+  loggerStream?: NodeJS.WritableStream;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const env = getEnv();
+
+  const loggerConfig: Record<string, unknown> = {
+    level: env.NODE_ENV === 'test' ? 'warn' : 'info',
+    redact: ['req.headers.authorization', 'req.headers.cookie'],
+  };
+  if (options.loggerStream) {
+    loggerConfig.stream = options.loggerStream;
+  }
 
   const app = Fastify({
     bodyLimit: 1048576, // 1MB body limit (Item 4)
     connectionTimeout: 120000, // 120s timeout (never shorter than 60s)
     requestTimeout: 120000, // 120s timeout (never shorter than 60s)
     keepAliveTimeout: 65000, // 65s keepalive for upstream proxies
-    logger: {
-      level: env.NODE_ENV === 'test' ? 'warn' : 'info',
-      redact: ['req.headers.authorization', 'req.headers.cookie'],
-    },
+    logger: loggerConfig as any,
   });
 
   // Security Headers (Item 4)
@@ -174,8 +182,34 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     let code = 'INTERNAL_ERROR';
     let message = error?.message || 'An unexpected error occurred';
     let details: unknown = undefined;
+    let alreadyLogged = false;
 
-    if (error instanceof z.ZodError) {
+    if (error instanceof ResponseValidationError) {
+      statusCode = 500;
+      code = 'INTERNAL_ERROR';
+      const formattedIssues = error.issues.map((issue) => ({
+        path: issue.path.join('.') || 'root',
+        message: issue.message,
+      }));
+      request.log.error(
+        {
+          reqId: request.id,
+          route: error.route,
+          method: request.method,
+          url: request.url,
+          issues: formattedIssues,
+        },
+        `Response validation failed on ${error.route}: ${formattedIssues.map((i) => `${i.path}: ${i.message}`).join('; ')}`,
+      );
+      alreadyLogged = true;
+      if (env.NODE_ENV === 'production') {
+        message = 'Internal server error';
+        details = undefined;
+      } else {
+        message = error.message;
+        details = formattedIssues;
+      }
+    } else if (error instanceof z.ZodError) {
       statusCode = 400;
       code = 'VALIDATION_ERROR';
       message = 'Request validation failed';
@@ -227,7 +261,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
 
-    if (statusCode >= 500) {
+    if (statusCode >= 500 && !alreadyLogged) {
       const isStaticReq =
         request.url === '/' ||
         request.url.startsWith('/assets/') ||
@@ -444,7 +478,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     };
 
     // Validate response shape against Contract v1 schema
-    const validated = DashboardResponseSchema.parse(dashboardData);
+    const validated = validateResponseSchema(
+      DashboardResponseSchema,
+      dashboardData,
+      'GET /api/dashboard',
+    );
     return validated;
   });
 
