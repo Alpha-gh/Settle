@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { http, HttpResponse } from 'msw';
+import { server } from '../test/setup';
 import { DashboardPage } from './DashboardPage';
 import { BreachMemoryProvider } from '../state/breachMemory';
 import { TEST_IDS } from '../testids';
@@ -113,5 +115,25 @@ describe('DashboardPage Integration', () => {
 
     expect(screen.queryByText(/Active simulation overlay/i)).not.toBeInTheDocument();
   }, 15000);
+
+  it('shows small amber warning note when /api/dashboard includes non-empty warnings', async () => {
+    server.use(
+      http.get('/api/dashboard', () => {
+        return HttpResponse.json({
+          ...mockState.getDashboard(false),
+          warnings: ['Dropped invalid auditLog row aud_bad: invalid actor'],
+        });
+      }),
+    );
+
+    renderDashboard('/');
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('Some records could not be displayed')).toBeInTheDocument();
+      },
+      { timeout: 8000 },
+    );
+  });
 });
 
