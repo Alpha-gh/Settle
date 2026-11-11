@@ -1,4 +1,4 @@
-import { loadSeedSnapshot } from '@settle/shared';
+import { loadSeedSnapshot, type AuditActor } from '@settle/shared';
 import { getDb, getRawSql } from './index.js';
 import {
   businesses,
@@ -114,10 +114,11 @@ export async function resetDemoData(): Promise<void> {
   });
 
   // 6. Initial Audit Event
+  const seedActor: AuditActor = 'system';
   await db.insert(auditEvents).values({
     id: `aud_init_${Date.now()}`,
     ts: new Date().toISOString(),
-    actor: 'system',
+    actor: seedActor,
     kind: 'demo.reset',
     summary: 'Demo dataset reset to baseline seed snapshot',
   });

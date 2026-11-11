@@ -1291,7 +1291,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const result = await reconcileService.reconcileInvoicePayment({
         invoiceId: invoice.id,
         paypalInvoiceId: invoice.paypalInvoiceId,
-        actor: 'manual',
+        actor: 'owner',
         eventType: 'demo.reconcile',
       });
 
@@ -1322,7 +1322,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const res = await reconcileService.reconcileInvoicePayment({
         invoiceId: inv.id,
         paypalInvoiceId: inv.paypalInvoiceId!,
-        actor: 'manual',
+        actor: 'owner',
         eventType: 'demo.reconcile',
       });
       reconciled.push({

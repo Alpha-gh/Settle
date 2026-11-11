@@ -4,7 +4,7 @@ function formatMoney(cents: number): string {
 }
 
 import { eq } from 'drizzle-orm';
-import type { Invoice, Id, Cents, AuditEvent, ForecastResult, PayPalPort } from '@settle/shared';
+import type { Invoice, Id, Cents, AuditActor, AuditEvent, ForecastResult, PayPalPort } from '@settle/shared';
 import { getDb } from '../db/index.js';
 import { businesses, invoices, auditEvents } from '../db/schema.js';
 import {
@@ -20,7 +20,7 @@ import { getEngine } from '../adapters/engine.js';
 export interface ReconcilePaymentParams {
   invoiceId: Id;
   paypalInvoiceId: string;
-  actor?: string;
+  actor?: AuditActor;
   eventType?: string;
   eventId?: string;
   paypalRequestId?: string;
@@ -120,7 +120,7 @@ export class PaymentReconciliationService {
       const payAudit: AuditEvent = {
         id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         ts: new Date().toISOString(),
-        actor: (params.actor as any) || 'paypal',
+        actor: params.actor ?? 'paypal',
         kind: auditKind,
         summary: auditSummary,
         invoiceId: updated.id,
